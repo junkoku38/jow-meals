@@ -35,6 +35,7 @@ ATTR_COVERS = "covers"
 ATTR_LIMIT = "limit"
 ATTR_CHOICE = "choice"
 ATTR_WEEK_OFFSET = "week_offset"
+ATTR_ENTRY_NAME = "entry_name"
 
 # Service jow.suggest
 SERVICE_SUGGEST = "suggest"

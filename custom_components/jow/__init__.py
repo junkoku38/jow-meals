@@ -22,6 +22,7 @@ from .const import (
     ATTR_QUERY,
     ATTR_WEEK_OFFSET,
     ATTR_WEEKDAY,
+    ATTR_ENTRY_NAME,
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
     CONF_JOW_TOKEN,
@@ -47,6 +48,23 @@ from .manager import JowManager, _recipe_to_dict
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.TODO]
+
+
+def _get_manager(hass: HomeAssistant, call: ServiceCall, default_manager: JowManager) -> JowManager:
+    """Résout le bon manager selon le paramètre entry_name.
+
+    Si entry_name est fourni, on cherche l'instance correspondante.
+    Sinon, on retombe sur l'instance par défaut (la première configurée).
+    """
+    entry_name = call.data.get("entry_name")
+    if not entry_name:
+        return default_manager
+    for entry_id, manager in hass.data.get(DOMAIN, {}).items():
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry and (entry.title == entry_name or entry.data.get("name") == entry_name):
+            return manager
+    _LOGGER.warning("Instance Jow « %s » introuvable, utilisation de l'instance par défaut", entry_name)
+    return default_manager
 
 
 def _resolve_date(manager: JowManager, call: ServiceCall) -> date:
@@ -94,8 +112,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Services
     # ------------------------------------------------------------------
     async def handle_plan_meal(call: ServiceCall) -> None:
-        day = _resolve_date(manager, call)
-        await manager.async_plan_meal(
+        mgr = _get_manager(hass, call, manager)
+        day = _resolve_date(mgr, call)
+        await mgr.async_plan_meal(
             day,
             call.data[ATTR_QUERY],
             covers=call.data.get(ATTR_COVERS),
@@ -103,28 +122,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
     async def handle_clear_meal(call: ServiceCall) -> None:
-        await manager.async_clear_meal(_resolve_date(manager, call))
+        mgr = _get_manager(hass, call, manager)
+        await mgr.async_clear_meal(_resolve_date(mgr, call))
 
     async def handle_clear_week(call: ServiceCall) -> None:
-        await manager.async_clear_week(call.data.get(ATTR_WEEK_OFFSET, 0))
+        mgr = _get_manager(hass, call, manager)
+        await mgr.async_clear_week(call.data.get(ATTR_WEEK_OFFSET, 0))
 
     async def handle_refresh_list(call: ServiceCall) -> None:
-        await manager.async_refresh_shopping_list(
+        mgr = _get_manager(hass, call, manager)
+        await mgr.async_refresh_shopping_list(
             call.data.get(ATTR_WEEK_OFFSET, 0),
             keep_checked=call.data.get("keep_checked", True),
         )
 
     async def handle_search(call: ServiceCall) -> ServiceResponse:
         """Renvoie les résultats : utile pour un agent conversationnel."""
-        results = await manager.async_search(
+        mgr = _get_manager(hass, call, manager)
+        results = await mgr.async_search(
             call.data[ATTR_QUERY], limit=call.data.get(ATTR_LIMIT, 5)
         )
-        covers = call.data.get(ATTR_COVERS) or manager.default_covers
+        covers = call.data.get(ATTR_COVERS) or mgr.default_covers
         return {"recipes": [_recipe_to_dict(r, covers) for r in results]}
 
     async def handle_suggest(call: ServiceCall) -> ServiceResponse:
         """Suggère des recettes via l'IA (ai_task) puis recherche sur Jow."""
-        results = await manager.async_suggest(
+        mgr = _get_manager(hass, call, manager)
+        results = await mgr.async_suggest(
             criteria=call.data.get(ATTR_CRITERIA, ""),
             covers=call.data.get(ATTR_COVERS),
             limit=call.data.get(ATTR_LIMIT, 5),
@@ -183,6 +207,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
                     vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
                     vol.Optional(ATTR_CHOICE, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
                 }
             ),
         )
@@ -195,6 +220,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(ATTR_DATE): cv.date,
                     vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
                     vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
                 }
             ),
         )
@@ -202,7 +228,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             DOMAIN,
             SERVICE_CLEAR_WEEK,
             handle_clear_week,
-            schema=vol.Schema({vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int)}),
+            schema=vol.Schema({vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int), vol.Optional(ATTR_ENTRY_NAME): cv.string}),
         )
         hass.services.async_register(
             DOMAIN,
@@ -212,6 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 {
                     vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
                     vol.Optional("keep_checked", default=True): cv.boolean,
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
                 }
             ),
         )
@@ -224,6 +251,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Required(ATTR_QUERY): cv.string,
                     vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
                     vol.Optional(ATTR_COVERS): vol.Coerce(int),
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
                 }
             ),
         )
@@ -240,6 +268,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(CONF_AI_ENTITY): cv.string,
                     vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
                     vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
                 }
             ),
         )

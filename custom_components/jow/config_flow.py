@@ -19,18 +19,22 @@ from .const import (
 
 
 class JowConfigFlow(ConfigFlow, domain=DOMAIN):
-    """L'API Jow utilisée ici est publique : aucun identifiant n'est demandé."""
+    """L'API Jow utilisée ici est publique : aucun identifiant n'est demandé.
+
+    Plusieurs instances sont supportées : chaque instance porte un nom
+    (ex. « Paul », « Camille ») qui sert d'identifiant unique.
+    """
 
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        await self.async_set_unique_id(DOMAIN)
-        self._abort_if_unique_id_configured()
-
         if user_input is not None:
+            name = user_input.get("name", "Jow").strip() or "Jow"
+            await self.async_set_unique_id(f"{DOMAIN}_{name.lower()}")
+            self._abort_if_unique_id_configured()
             return self.async_create_entry(
-                title="Jow",
-                data={},
+                title=name,
+                data={"name": name},
                 options={
                     "covers": user_input["covers"],
                     CONF_ALLERGIES: user_input.get(CONF_ALLERGIES, ""),
@@ -45,6 +49,7 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema(
                 {
+                    vol.Required("name", default="Jow"): cv.string,
                     vol.Required("covers", default=DEFAULT_COVERS): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
                     ),

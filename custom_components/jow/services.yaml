@@ -8,6 +8,11 @@ plan_meal:
       example: poulet curry coco
       selector:
         text:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
     weekday:
       name: Jour
       selector:
