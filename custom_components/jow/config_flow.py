@@ -5,6 +5,7 @@ from __future__ import annotations
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
+from homeassistant.helpers import config_validation as cv
 
 from .const import (
     CONF_AI_ENTITY,
@@ -47,11 +48,11 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Required("covers", default=DEFAULT_COVERS): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
                     ),
-                    vol.Optional(CONF_ALLERGIES): vol.Text(),
-                    vol.Optional(CONF_PREFERENCES): vol.Text(),
-                    vol.Optional(CONF_AI_ENTITY): vol.Text(),
-                    vol.Optional(CONF_WEATHER_ENTITY): vol.Text(),
-                    vol.Optional(CONF_JOW_TOKEN): vol.Text(),
+                    vol.Optional(CONF_ALLERGIES, default=""): cv.string,
+                    vol.Optional(CONF_PREFERENCES, default=""): cv.string,
+                    vol.Optional(CONF_AI_ENTITY, default=""): cv.string,
+                    vol.Optional(CONF_WEATHER_ENTITY, default=""): cv.string,
+                    vol.Optional(CONF_JOW_TOKEN, default=""): cv.string,
                 }
             ),
         )
@@ -77,11 +78,11 @@ class JowOptionsFlow(OptionsFlow):
                     vol.Required("covers", default=opts.get("covers", DEFAULT_COVERS)): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
                     ),
-                    vol.Optional(CONF_ALLERGIES, default=opts.get(CONF_ALLERGIES, "")): vol.Text(),
-                    vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): vol.Text(),
-                    vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): vol.Text(),
-                    vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): vol.Text(),
-                    vol.Optional(CONF_JOW_TOKEN, default=opts.get(CONF_JOW_TOKEN, "")): vol.Text(),
+                    vol.Optional(CONF_ALLERGIES, default=opts.get(CONF_ALLERGIES, "")): cv.string,
+                    vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): cv.string,
+                    vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): cv.string,
+                    vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): cv.string,
+                    vol.Optional(CONF_JOW_TOKEN, default=opts.get(CONF_JOW_TOKEN, "")): cv.string,
                 }
             ),
         )
