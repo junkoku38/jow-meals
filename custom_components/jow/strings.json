@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Jow",
+        "description": "Aucun identifiant n'est nécessaire. Choisissez le nombre de couverts par défaut.",
+        "data": { "covers": "Couverts par défaut" }
+      }
+    },
+    "abort": { "already_configured": "Jow est déjà configuré." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "data": { "covers": "Couverts par défaut" }
+      }
+    }
+  }
+}

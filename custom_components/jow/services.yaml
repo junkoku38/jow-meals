@@ -1,0 +1,104 @@
+plan_meal:
+  name: Planifier un repas
+  description: Recherche une recette sur Jow et l'épingle sur un jour.
+  fields:
+    query:
+      name: Recherche
+      required: true
+      example: poulet curry coco
+      selector:
+        text:
+    weekday:
+      name: Jour
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    date:
+      name: Date précise
+      description: Prioritaire sur le jour de la semaine.
+      selector:
+        date:
+    week_offset:
+      name: Décalage de semaine
+      description: 0 = semaine en cours, 1 = semaine prochaine.
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    covers:
+      name: Couverts
+      selector:
+        number:
+          min: 1
+          max: 12
+    choice:
+      name: Résultat à retenir
+      description: 1 = premier résultat de la recherche.
+      default: 1
+      selector:
+        number:
+          min: 1
+          max: 10
+
+clear_meal:
+  name: Effacer un repas
+  fields:
+    weekday:
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    date:
+      selector:
+        date:
+    week_offset:
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+
+clear_week:
+  name: Effacer la semaine
+  fields:
+    week_offset:
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+
+refresh_shopping_list:
+  name: Régénérer la liste de courses
+  fields:
+    week_offset:
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    keep_checked:
+      name: Conserver les articles cochés
+      default: true
+      selector:
+        boolean:
+
+search:
+  name: Rechercher une recette
+  description: Renvoie les recettes trouvées (utile pour un agent conversationnel).
+  fields:
+    query:
+      required: true
+      selector:
+        text:
+    limit:
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 20
+    covers:
+      selector:
+        number:
+          min: 1
+          max: 12
