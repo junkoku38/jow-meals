@@ -49,11 +49,16 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 
 1. Le plugin utilise l'**API publique** Jow pour les recettes (pas de token requis)
 2. Le token Jow sert uniquement à **synchroniser les allergènes/préférences**
-3. Le token est valide **48h** — pas de rafraîchissement automatique (la session
-   provider Courses U expire)
-4. Quand le token expire, le plugin continue de fonctionner normalement avec
-   l'API publique + les derniers allergènes syncés
-5. Pour renouveler : cliquez sur le bookmarklet `Jow → HA` depuis jow.fr
+3. Le refresh token (valide **~6 mois**) permet de générer un access token
+   (valide **48h**) automatiquement, toutes les **24h**, sans intervention
+4. Quand le refresh token expire, le plugin continue de fonctionner normalement
+   avec l'API publique + les derniers allergènes syncés
+5. Pour renouveler le refresh token : cliquez sur le bookmarklet `Jow → HA`
+   depuis jow.fr
+
+> ℹ️ Le refresh token est persisté dans la config entry : il survit aux
+> redémarrages de Home Assistant. Une seule connexion via le bookmarklet
+> suffit pour ~6 mois d'autonomie.
 
 ### Installation du bookmarklet
 

@@ -17,7 +17,11 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 
 from .const import (
+    CONF_JOW_REFRESH_TOKEN,
+    CONF_JOW_TOKEN,
     DEFAULT_COVERS,
+    DOMAIN,
+    JOW_AUTH_REFRESH_URL,
     JOW_AUTH_URL,
     JOW_FAVORITES_URL,
     JOW_MENU_URL,
@@ -685,9 +689,10 @@ class JowManager:
     async def async_refresh_jow_token(self) -> bool:
         """Rafraîchit l'access token JWT Jow via le refresh token.
 
-        Jow utilise un refresh token (valide ~1 an) pour générer un access
-        token (valide 48h). On envoie le refresh token comme Bearer à
-        POST /auth?createIfNotExist=false et on récupère le nouvel accessToken.
+        Jow utilise un refresh token (valide ~6 mois) pour générer un access
+        token (valide 48h). L'endpoint POST /public/auth/refresh attend le
+        refresh token dans le corps de la requête (JSON) — ne PAS envoyer
+        d'en-tête Authorization, sinon l'API répond 500.
         """
         if not self.jow_refresh_token:
             return False
@@ -695,22 +700,22 @@ class JowManager:
         def _refresh():
             headers = {
                 "accept": "application/json, text/plain, */*",
-                "content-type": "text/plain;charset=UTF-8",
+                "content-type": "application/json",
                 "origin": "https://jow.fr",
                 "referer": "https://jow.fr/",
                 "x-jow-withmeta": "true",
-                "authorization": f"Bearer {self.jow_refresh_token}",
                 "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "accept-language": "fr",
             }
             resp = requests.post(
-                JOW_AUTH_URL,
+                JOW_AUTH_REFRESH_URL,
                 headers=headers,
-                params={"createIfNotExist": "false"},
-                data="{}",
+                params={"availabilityZoneId": "FR"},
+                data=json.dumps({"refreshToken": self.jow_refresh_token}),
                 timeout=15,
             )
             resp.raise_for_status()
-            data = resp.json().get("data", {})
+            data = resp.json()
             return data.get("accessToken"), data.get("refreshToken")
 
         try:
@@ -722,10 +727,25 @@ class JowManager:
                 if new_refresh:
                     self.jow_refresh_token = new_refresh
                 _LOGGER.info("Token Jow rafraîchi avec succès (via refresh token)")
+                # Persister les nouveaux tokens dans la config entry
+                await self._async_persist_tokens()
                 return True
         except Exception as err:
             _LOGGER.warning("Rafraîchissement token Jow échoué : %s", err)
         return False
+
+    async def _async_persist_tokens(self) -> None:
+        """Persiste les tokens rafraîchis dans la config entry pour survivre
+        aux redémarrages de Home Assistant."""
+        try:
+            entries = self.hass.config_entries.async_entries(DOMAIN)
+            for entry in entries:
+                new_data = {**entry.data}
+                new_data[CONF_JOW_TOKEN] = self.jow_token
+                new_data[CONF_JOW_REFRESH_TOKEN] = self.jow_refresh_token
+                self.hass.config_entries.async_update_entry(entry, data=new_data)
+        except Exception as err:
+            _LOGGER.debug("Persistance tokens Jow impossible : %s", err)
 
     async def async_get_jow_profile(self) -> dict | None:
         """Récupère le profil Jow de l'utilisateur connecté."""
@@ -908,13 +928,12 @@ class JowManager:
         return sent
 
     async def async_start_token_refresh(self) -> None:
-        """Démarre la vérification périodique du token Jow.
+        """Démarre le rafraîchissement périodique du token Jow.
 
         Le token Jow n'est pas requis pour le fonctionnement de base
-        (recherche publique de recettes). Il sert uniquement à synchroniser
-        les allergènes et préférences du compte Jow. On ne rafraîchit pas
-        automatiquement (la session provider expire), on vérifie juste
-        la validité périodiquement.
+        (recherche publique de recettes). Il sert à synchroniser les
+        allergènes et préférences du compte Jow. On rafraîchit
+        automatiquement toutes les 24h via le refresh token (valide ~6 mois).
         """
         if not self.jow_token:
             return
@@ -923,34 +942,43 @@ class JowManager:
 
         if self._token_refresh_cancel:
             self._token_refresh_cancel()
-        # Vérifier toutes les 6h si le token est encore valide
+        # Rafraîchir toutes les 24h (access token valide 48h)
         self._token_refresh_cancel = async_track_time_interval(
             self.hass,
             self._async_check_token_callback,
-            timedelta(hours=6),
+            timedelta(seconds=JOW_TOKEN_REFRESH_INTERVAL),
         )
 
     async def _async_check_token_callback(self, now=None) -> None:
-        """Vérifie périodiquement si le token Jow est encore valide.
+        """Rafraîchit périodiquement le token Jow.
 
-        Si le token a expiré, notifie l'utilisateur pour qu'il le renouvelle
-        via le bookmarklet. Les recettes publiques continuent de fonctionner.
+        Tente d'abord un refresh via le refresh token. Si le refresh
+        échoue (token expiré/révoqué), vérifie la validité du access token
+        restant et notifie l'utilisateur si nécessaire. Les recettes
+        publiques continuent de fonctionner dans tous les cas.
         """
         if not self.jow_token:
             return
+        # 1) Tenter un refresh proactif
+        if self.jow_refresh_token:
+            refreshed = await self.async_refresh_jow_token()
+            if refreshed:
+                return
+        # 2) Si le refresh a échoué, vérifier si le access token est encore
+        # valide (il peut rester jusqu'à 48h de marge).
         valid = await self.async_check_token_validity()
         if not valid:
             from homeassistant.components import persistent_notification
             persistent_notification.async_create(
                 self.hass,
-                "Le token Jow a expiré. Les recettes publiques continuent de fonctionner, "
+                "Le refresh token Jow a expiré. Les recettes publiques continuent de fonctionner, "
                 "mais les allergènes ne sont plus synchronisés. Reconnectez-vous sur jow.fr "
                 "et cliquez sur le bookmarklet Jow → HA pour renouveler le token.",
                 "Jow - Token expiré",
                 "jow_token_expired",
             )
-            # Vider le token pour éviter les appels inutiles
-            self.jow_token = ""
+            # Vider le refresh token pour arrêter les tentatives inutiles
+            self.jow_refresh_token = ""
 
     async def async_check_token_validity(self) -> bool:
         """Vérifie si le token Jow est encore valide."""
