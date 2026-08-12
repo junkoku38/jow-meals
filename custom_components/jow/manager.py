@@ -9,6 +9,8 @@ from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
 
+import requests
+
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
@@ -28,6 +30,17 @@ _MAX_FIELD_LEN = 2000
 _MAX_NAME_LEN = 200
 _MAX_ITEMS = 500
 _MAX_SUMMARY_LEN = 500
+
+# API Jow (non officielle).
+_JOW_SEARCH_URL = "https://api.jow.fr/public/recipe/quicksearch"
+_JOW_STATIC_URL = "https://static.jow.fr/"
+_JOW_HEADERS = {
+    "accept": "application/json",
+    "accept-language": "fr",
+    "content-type": "application/json",
+    "x-jow-withmeta": "1",
+}
+_JOW_PARAMS = {"start": "0", "availabilityZoneId": "FR"}
 _ALLOWED_URL_SCHEMES = {"http", "https"}
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -59,14 +72,34 @@ def _truncate(value: Any, limit: int) -> str | None:
     return text[:limit]
 
 
+def _jow_ingredient_unit(constituent: dict) -> str:
+    """Résout l'unité d'un constituant Jow (naturalUnit ou alternativeUnit)."""
+    try:
+        unit_id = constituent.get("unit", {}).get("id")
+        ing = constituent.get("ingredient", {})
+        natural = ing.get("naturalUnit", {})
+        if natural.get("_id") == unit_id or natural.get("id") == unit_id:
+            return natural.get("name", "")
+        for alt in ing.get("alternativeUnits", []):
+            u = alt.get("unit", {})
+            if u.get("_id") == unit_id or u.get("id") == unit_id:
+                return u.get("name", "")
+    except (TypeError, AttributeError):
+        pass
+    return ""
+
+
 def _recipe_to_dict(recipe: Any, covers: int) -> dict:
-    """Convertit un JowResult (objet du paquet jow-api) en dict sérialisable.
+    """Convertit une recette Jow (dict JSON de l'API) en dict sérialisable.
 
     On stocke un dict plutôt que l'objet : il doit survivre à un redémarrage
     de Home Assistant et être lisible depuis les templates Jinja.
     """
+    if not isinstance(recipe, dict):
+        return {}
+
     ratio = 1.0
-    base_covers = getattr(recipe, "coversCount", None) or DEFAULT_COVERS
+    base_covers = recipe.get("roundedCoversCount") or DEFAULT_COVERS
     if base_covers:
         try:
             ratio = covers / float(base_covers)
@@ -74,37 +107,41 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
             ratio = 1.0
 
     ingredients = []
-    for ing in getattr(recipe, "ingredients", []) or []:
-        quantity = getattr(ing, "quantity", None)
+    for const in recipe.get("constituents", []) or []:
+        ing = const.get("ingredient", {})
+        quantity = ing.get("quantityPerCover")
         try:
             quantity = round(float(quantity) * ratio, 2) if quantity else quantity
         except (TypeError, ValueError):
             pass
         ingredients.append(
             {
-                "name": _truncate(getattr(ing, "name", ""), _MAX_NAME_LEN) or "",
+                "name": _truncate(ing.get("name", ""), _MAX_NAME_LEN) or "",
                 "quantity": quantity,
-                "unit": _truncate(getattr(ing, "unit", ""), _MAX_NAME_LEN) or "",
-                "optional": bool(getattr(ing, "isOptional", False)),
+                "unit": _truncate(_jow_ingredient_unit(const), _MAX_NAME_LEN) or "",
+                "optional": bool(const.get("isOptional", False)),
             }
         )
 
-    recipe_id = _safe_id(getattr(recipe, "id", None))
-    fallback_url = f"{RECIPE_BASE_URL}{recipe_id}" if recipe_id else None
-    url = _safe_url(getattr(recipe, "url", None), fallback=fallback_url)
-    image = _safe_url(getattr(recipe, "imageUrl", None))
-    video = _safe_url(getattr(recipe, "videoUrl", None))
+    recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
+    slug = recipe.get("slug")
+    url = f"{RECIPE_BASE_URL}{slug}" if slug else (f"{RECIPE_BASE_URL}{recipe_id}" if recipe_id else None)
+    image = None
+    if recipe.get("imageUrl"):
+        image = _safe_url(f"{_JOW_STATIC_URL}{recipe['imageUrl']}")
+    video = None
+    if recipe.get("videoUrl"):
+        video = _safe_url(f"{_JOW_STATIC_URL}{recipe['videoUrl']}")
 
     return {
         "id": recipe_id,
-        "name": _truncate(getattr(recipe, "name", "Recette Jow"), _MAX_NAME_LEN)
-        or "Recette Jow",
+        "name": _truncate(recipe.get("title", "Recette Jow"), _MAX_NAME_LEN) or "Recette Jow",
         "url": url,
         "image": image,
         "video": video,
-        "description": _truncate(getattr(recipe, "description", None), _MAX_FIELD_LEN),
-        "preparation_time": getattr(recipe, "preparationTime", None),
-        "cooking_time": getattr(recipe, "cookingTime", None),
+        "description": _truncate(recipe.get("description"), _MAX_FIELD_LEN),
+        "preparation_time": recipe.get("preparationTime"),
+        "cooking_time": recipe.get("cookingTime"),
         "covers": covers,
         "ingredients": ingredients,
     }
@@ -144,17 +181,23 @@ class JowManager:
     # ------------------------------------------------------------------
     # Appels à Jow (bloquants -> executor)
     # ------------------------------------------------------------------
-    async def async_search(self, query: str, limit: int = 5) -> list[Any]:
-        """Recherche des recettes sur Jow."""
+    async def async_search(self, query: str, limit: int = 5) -> list[dict]:
+        """Recherche des recettes sur Jow via l'API HTTP directe."""
 
         def _search():
-            from jow_api import Jow  # import tardif : dépendance installée par HA
-
-            return Jow.search(query, limit=limit)
+            params = dict(_JOW_PARAMS)
+            params["query"] = query
+            params["limit"] = str(max(limit, 1))
+            resp = requests.post(
+                _JOW_SEARCH_URL, headers=_JOW_HEADERS, params=params, data="{}", timeout=15
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return data.get("content", []) if isinstance(data, dict) else []
 
         try:
             return await self.hass.async_add_executor_job(_search) or []
-        except Exception as err:  # l'API n'est pas officielle : elle peut casser
+        except Exception as err:
             _LOGGER.error("Recherche Jow impossible (%s) : %s", query, err)
             return []
 
