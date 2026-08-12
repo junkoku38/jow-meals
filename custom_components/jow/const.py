@@ -35,3 +35,17 @@ ATTR_COVERS = "covers"
 ATTR_LIMIT = "limit"
 ATTR_CHOICE = "choice"
 ATTR_WEEK_OFFSET = "week_offset"
+
+# Service jow.suggest
+SERVICE_SUGGEST = "suggest"
+ATTR_CRITERIA = "criteria"
+ATTR_WEATHER_ENTITY = "weather_entity"
+ATTR_AI_ENTITY = "ai_entity"
+ATTR_PREFS = "preferences"
+ATTR_ALLERGIES = "allergies"
+
+# Options config
+CONF_ALLERGIES = "allergies"
+CONF_PREFERENCES = "preferences"
+CONF_AI_ENTITY = "ai_entity"
+CONF_WEATHER_ENTITY = "weather_entity"

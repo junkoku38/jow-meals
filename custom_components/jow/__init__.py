@@ -14,11 +14,16 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     ATTR_CHOICE,
     ATTR_COVERS,
+    ATTR_CRITERIA,
     ATTR_DATE,
     ATTR_LIMIT,
     ATTR_QUERY,
     ATTR_WEEK_OFFSET,
     ATTR_WEEKDAY,
+    CONF_AI_ENTITY,
+    CONF_ALLERGIES,
+    CONF_PREFERENCES,
+    CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
     DOMAIN,
     SERVICE_CLEAR_MEAL,
@@ -26,6 +31,7 @@ from .const import (
     SERVICE_PLAN_MEAL,
     SERVICE_REFRESH_SHOPPING_LIST,
     SERVICE_SEARCH,
+    SERVICE_SUGGEST,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -51,7 +57,15 @@ def _resolve_date(manager: JowManager, call: ServiceCall) -> date:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure l'intégration depuis l'UI."""
-    manager = JowManager(hass, entry.options.get("covers", DEFAULT_COVERS))
+    opts = entry.options
+    manager = JowManager(
+        hass,
+        opts.get("covers", DEFAULT_COVERS),
+        allergies=opts.get(CONF_ALLERGIES, ""),
+        preferences=opts.get(CONF_PREFERENCES, ""),
+        ai_entity=opts.get(CONF_AI_ENTITY, ""),
+        weather_entity=opts.get(CONF_WEATHER_ENTITY, ""),
+    )
     await manager.async_load()
     manager.purge_old()
 
@@ -89,6 +103,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         covers = call.data.get(ATTR_COVERS) or manager.default_covers
         return {"recipes": [_recipe_to_dict(r, covers) for r in results]}
+
+    async def handle_suggest(call: ServiceCall) -> ServiceResponse:
+        """Suggère des recettes via l'IA (ai_task) puis recherche sur Jow."""
+        results = await manager.async_suggest(
+            criteria=call.data.get(ATTR_CRITERIA, ""),
+            covers=call.data.get(ATTR_COVERS),
+            limit=call.data.get(ATTR_LIMIT, 5),
+            weather_entity=call.data.get(CONF_WEATHER_ENTITY),
+            ai_entity=call.data.get(CONF_AI_ENTITY),
+        )
+        return {"recipes": results}
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
@@ -148,6 +173,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
             supports_response=SupportsResponse.ONLY,
         )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SUGGEST,
+            handle_suggest,
+            schema=vol.Schema(
+                {
+                    vol.Optional(ATTR_CRITERIA): cv.string,
+                    vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+                    vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+                    vol.Optional(CONF_WEATHER_ENTITY): cv.string,
+                    vol.Optional(CONF_AI_ENTITY): cv.string,
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 
@@ -164,6 +204,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_CLEAR_WEEK,
                 SERVICE_REFRESH_SHOPPING_LIST,
                 SERVICE_SEARCH,
+                SERVICE_SUGGEST,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

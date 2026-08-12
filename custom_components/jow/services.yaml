@@ -102,3 +102,40 @@ search:
         number:
           min: 1
           max: 12
+
+suggest:
+  name: Suggérer des recettes par IA
+  description: >-
+    Génère une requête de recherche adaptée aux allergies, préférences et
+    météo via un agent ai_task, puis renvoie les recettes Jow correspondantes.
+  fields:
+    criteria:
+      name: Demande
+      description: Demande libre (ex. "plat frais pour canicule", "dîner léger").
+      selector:
+        text:
+    limit:
+      name: Nombre de résultats
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 20
+    covers:
+      name: Couverts
+      selector:
+        number:
+          min: 1
+          max: 12
+    weather_entity:
+      name: Capteur météo
+      description: Entité weather.* pour contextualiser (ex. weather.maison).
+      selector:
+        entity:
+          domain: weather
+    ai_entity:
+      name: Agent IA
+      description: Entité ai_task.* pour générer la requête (ex. ai_task.ollama_ai_task).
+      selector:
+        entity:
+          domain: ai_task

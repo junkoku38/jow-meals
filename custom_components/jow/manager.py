@@ -150,9 +150,21 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
 class JowManager:
     """Garde le planning de la semaine et la liste de courses."""
 
-    def __init__(self, hass: HomeAssistant, default_covers: int) -> None:
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        default_covers: int,
+        allergies: str = "",
+        preferences: str = "",
+        ai_entity: str = "",
+        weather_entity: str = "",
+    ) -> None:
         self.hass = hass
         self.default_covers = default_covers
+        self.allergies = allergies
+        self.preferences = preferences
+        self.ai_entity = ai_entity
+        self.weather_entity = weather_entity
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         # {"2026-08-10": {recette...}}
         self.plan: dict[str, dict] = {}
@@ -367,3 +379,76 @@ class JowManager:
         to_remove = set(uids)
         self.approved = [i for i in self.approved if i["uid"] not in to_remove]
         await self.async_save()
+
+    # ------------------------------------------------------------------
+    # Suggestion IA (ai_task.generate_data + jow.search)
+    # ------------------------------------------------------------------
+    async def async_suggest(
+        self,
+        criteria: str = "",
+        covers: int | None = None,
+        limit: int = 5,
+        weather_entity: str | None = None,
+        ai_entity: str | None = None,
+    ) -> list[dict]:
+        """Génère une requête Jow via l'IA puis cherche les recettes.
+
+        Utilise l'agent ai_task configuré (ou celui passé en paramètre) pour
+        formuler une requête de recherche adaptée aux allergies/préférences
+        de l'utilisateur et à la météo courante, puis interroge l'API Jow.
+        """
+        ai_ent = ai_entity or self.ai_entity
+        weather_ent = weather_entity or self.weather_entity
+
+        # Contexte météo
+        weather_ctx = ""
+        if weather_ent:
+            state = self.hass.states.get(weather_ent)
+            if state and state.state not in (None, "unknown", "unavailable"):
+                temp = state.attributes.get("temperature", "?")
+                weather_ctx = f"Météo actuelle : {state.state}, {temp}°C. "
+
+        # Contraintes utilisateur
+        constraints = ""
+        if self.allergies:
+            constraints += f"Allergies/interdits : {self.allergies}. "
+        if self.preferences:
+            constraints += f"Préférences : {self.preferences}. "
+        if criteria:
+            constraints += f"Demande : {criteria}. "
+
+        instructions = (
+            f"{weather_ctx}{constraints}"
+            "Génère une requête de recherche de recette courte (2 à 5 mots, "
+            "sans guillemets ni ponctuation) adaptée au contexte. "
+            "Réponds uniquement avec la requête."
+        )
+
+        # Appel ai_task.generate_data
+        query = ""
+        if ai_ent:
+            try:
+                response = await self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    {
+                        "task_name": "jow_recipe_suggest",
+                        "instructions": instructions,
+                        "entity_id": ai_ent,
+                    },
+                    return_response=True,
+                )
+                query = (response or {}).get("response", {}).get("data", "")
+                query = str(query).strip().strip('"').strip("'")
+            except Exception as err:
+                _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
+                query = ""
+
+        # Fallback : utiliser criteria directement
+        if not query:
+            query = criteria or "recette"
+
+        _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
+        results = await self.async_search(query, limit=max(limit, 1))
+        covers = covers or self.default_covers
+        return [_recipe_to_dict(r, covers) for r in results]

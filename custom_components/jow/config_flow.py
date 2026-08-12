@@ -6,7 +6,14 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 
-from .const import DEFAULT_COVERS, DOMAIN
+from .const import (
+    CONF_AI_ENTITY,
+    CONF_ALLERGIES,
+    CONF_PREFERENCES,
+    CONF_WEATHER_ENTITY,
+    DEFAULT_COVERS,
+    DOMAIN,
+)
 
 
 class JowConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -20,7 +27,15 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             return self.async_create_entry(
-                title="Jow", data={}, options={"covers": user_input["covers"]}
+                title="Jow",
+                data={},
+                options={
+                    "covers": user_input["covers"],
+                    CONF_ALLERGIES: user_input.get(CONF_ALLERGIES, ""),
+                    CONF_PREFERENCES: user_input.get(CONF_PREFERENCES, ""),
+                    CONF_AI_ENTITY: user_input.get(CONF_AI_ENTITY, ""),
+                    CONF_WEATHER_ENTITY: user_input.get(CONF_WEATHER_ENTITY, ""),
+                },
             )
 
         return self.async_show_form(
@@ -29,7 +44,11 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required("covers", default=DEFAULT_COVERS): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
-                    )
+                    ),
+                    vol.Optional(CONF_ALLERGIES): vol.Text(),
+                    vol.Optional(CONF_PREFERENCES): vol.Text(),
+                    vol.Optional(CONF_AI_ENTITY): vol.Text(),
+                    vol.Optional(CONF_WEATHER_ENTITY): vol.Text(),
                 }
             ),
         )
@@ -41,20 +60,24 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class JowOptionsFlow(OptionsFlow):
-    """Permet de changer le nombre de couverts par défaut."""
+    """Permet de changer le nombre de couverts, allergies, préférences, agent IA."""
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        current = self.config_entry.options.get("covers", DEFAULT_COVERS)
+        opts = self.config_entry.options
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
-                    vol.Required("covers", default=current): vol.All(
+                    vol.Required("covers", default=opts.get("covers", DEFAULT_COVERS)): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
-                    )
+                    ),
+                    vol.Optional(CONF_ALLERGIES, default=opts.get(CONF_ALLERGIES, "")): vol.Text(),
+                    vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): vol.Text(),
+                    vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): vol.Text(),
+                    vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): vol.Text(),
                 }
             ),
         )

@@ -3,16 +3,28 @@
     "step": {
       "user": {
         "title": "Jow",
-        "description": "Aucun identifiant n'est nécessaire. Choisissez le nombre de couverts par défaut.",
-        "data": { "covers": "Couverts par défaut" }
+        "description": "No credentials needed. Choose the default number of covers.",
+        "data": {
+          "covers": "Default covers",
+          "allergies": "Allergies / restrictions (e.g. nuts, tomatoes)",
+          "preferences": "Preferences (e.g. mediterranean, vegetarian)",
+          "ai_entity": "AI agent ai_task (e.g. ai_task.ollama_ai_task)",
+          "weather_entity": "Weather sensor (e.g. weather.home)"
+        }
       }
     },
-    "abort": { "already_configured": "Jow est déjà configuré." }
+    "abort": { "already_configured": "Jow is already configured." }
   },
   "options": {
     "step": {
       "init": {
-        "data": { "covers": "Couverts par défaut" }
+        "data": {
+          "covers": "Default covers",
+          "allergies": "Allergies / restrictions",
+          "preferences": "Preferences",
+          "ai_entity": "AI agent ai_task",
+          "weather_entity": "Weather sensor"
+        }
       }
     }
   }
