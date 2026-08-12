@@ -513,6 +513,7 @@ class JowGoogleCallbackView(HomeAssistantView):
 
     URL: /api/jow/google_callback
     Méthode: POST avec { credential: "eyJ..." }
+    Supporte aussi GET avec ?credential=... pour contourner CORS.
     """
 
     url = "/api/jow/google_callback"
@@ -522,27 +523,9 @@ class JowGoogleCallbackView(HomeAssistantView):
     def __init__(self, managers: dict) -> None:
         self._managers = managers
 
-    async def post(self, request):
+    async def _process_credential(self, request, id_token):
         from aiohttp import web
         import requests as req
-
-        cors_headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-        }
-
-        if request.method == "OPTIONS":
-            return web.Response(status=204, headers=cors_headers)
-
-        try:
-            body = await request.json()
-        except Exception:
-            return web.json_response({"error": "Body JSON manquant"}, status=400, headers=cors_headers)
-
-        id_token = body.get("credential")
-        if not id_token:
-            return web.json_response({"error": "Credential manquant"}, status=400, headers=cors_headers)
 
         # Envoyer l'ID token à Jow pour obtenir un JWT Jow
         def _jow_auth():
@@ -565,16 +548,16 @@ class JowGoogleCallbackView(HomeAssistantView):
             jow_resp = await hass.async_add_executor_job(_jow_auth)
         except Exception as err:
             _LOGGER.error("Auth Jow Google échoué : %s", err)
-            return web.json_response({"error": f"Erreur réseau Jow : {err}"}, status=502, headers=cors_headers)
+            return web.json_response({"error": f"Erreur réseau Jow : {err}"}, status=502)
 
         if jow_resp.status_code != 200:
             _LOGGER.error("Auth Jow Google échoué : %s", jow_resp.text[:200])
-            return web.json_response({"error": "Auth Jow échouée"}, status=400, headers=cors_headers)
+            return web.json_response({"error": "Auth Jow échouée"}, status=400)
 
         jow_data = jow_resp.json().get("data", {})
         jow_token = jow_data.get("accessToken")
         if not jow_token:
-            return web.json_response({"error": "Token Jow manquant"}, status=400, headers=cors_headers)
+            return web.json_response({"error": "Token Jow manquant"}, status=400)
 
         # Stocker le token dans le premier manager disponible
         manager = None
@@ -583,7 +566,7 @@ class JowGoogleCallbackView(HomeAssistantView):
             break
 
         if not manager:
-            return web.json_response({"error": "Aucune instance Jow configurée"}, status=400, headers=cors_headers)
+            return web.json_response({"error": "Aucune instance Jow configurée"}, status=400)
 
         manager.jow_token = jow_token
         ok = await manager.async_check_token_validity()
@@ -597,7 +580,7 @@ class JowGoogleCallbackView(HomeAssistantView):
                 "Jow - Connexion Google réussie",
                 "jow_google_auth_success",
             )
-            return web.json_response({"status": "ok", "message": "Token Jow récupéré"}, headers=cors_headers)
+            return web.json_response({"status": "ok", "message": "Token Jow récupéré"})
         else:
             persistent_notification.async_create(
                 hass,
@@ -605,4 +588,28 @@ class JowGoogleCallbackView(HomeAssistantView):
                 "Jow - Token invalide",
                 "jow_google_auth_invalid",
             )
-            return web.json_response({"error": "Token Jow invalide"}, status=400, headers=cors_headers)
+            return web.json_response({"error": "Token Jow invalide"}, status=400)
+
+    async def post(self, request):
+        from aiohttp import web
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Body JSON manquant"}, status=400)
+        id_token = body.get("credential")
+        if not id_token:
+            return web.json_response({"error": "Credential manquant"}, status=400)
+        return await self._process_credential(request, id_token)
+
+    async def get(self, request):
+        """GET avec ?credential=... pour contourner CORS.
+        Le bookmarklet redirige vers cette URL au lieu de faire un fetch."""
+        from aiohttp import web
+        id_token = request.query.get("credential")
+        if not id_token:
+            return web.Response(text="Credential manquant", status=400)
+        result = await self._process_credential(request, id_token)
+        # Retourner une page HTML au lieu de JSON (pour GET)
+        if result.status == 200:
+            return web.Response(text="<html><body><h2>✅ Connexion Jow réussie !</h2><p>Token Jow récupéré par Home Assistant. Vous pouvez fermer cette page.</p></body></html>", content_type="text/html")
+        return result
