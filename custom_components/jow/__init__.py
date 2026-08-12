@@ -43,6 +43,7 @@ from .const import (
     SERVICE_MEAL_DONE,
     SERVICE_SYNC_PROFILE,
     SERVICE_SYNC_CALORIES,
+    SERVICE_SEND_MENU,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -194,10 +195,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
-        updated = await manager.async_sync_calories(
+        mgr = _get_manager(hass, call, manager)
+        updated = await mgr.async_sync_calories(
             call.data.get(ATTR_WEEK_OFFSET, 0)
         )
         return {"updated": updated}
+
+    async def handle_send_menu(call: ServiceCall) -> ServiceResponse:
+        """Envoie le menu de la semaine au compte Jow (panier)."""
+        mgr = _get_manager(hass, call, manager)
+        sent = await mgr.async_send_menu_to_jow(
+            call.data.get(ATTR_WEEK_OFFSET, 0)
+        )
+        return {"sent": sent, "message": f"{sent} recettes envoyées à Jow"}
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
@@ -327,6 +337,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             supports_response=SupportsResponse.ONLY,
         )
 
+    if not hass.services.has_service(DOMAIN, SERVICE_SEND_MENU):
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SEND_MENU,
+            handle_send_menu,
+            schema=vol.Schema(
+                {
+                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
+        )
+
     return True
 
 
@@ -348,6 +372,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SYNC_PREFERENCES,
                 SERVICE_MEAL_DONE,
                 SERVICE_SYNC_CALORIES,
+                SERVICE_SEND_MENU,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

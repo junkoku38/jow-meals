@@ -210,3 +210,18 @@ sync_calories:
         number:
           min: -4
           max: 8
+
+send_menu:
+  name: Envoyer le menu à Jow
+  description: >-
+    Envoie le menu planifié dans Home Assistant au compte Jow pour générer
+    le panier de courses sur jow.fr.
+  fields:
+    week_offset:
+      name: Décalage de semaine
+      description: 0 = semaine en cours, 1 = semaine prochaine.
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8

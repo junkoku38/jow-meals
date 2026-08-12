@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import uuid
@@ -857,6 +858,54 @@ class JowManager:
         except Exception as err:
             _LOGGER.warning("Récupération menu Jow échouée : %s", err)
             return []
+
+    async def async_send_menu_to_jow(self, week_offset: int = 0) -> int:
+        """Envoie le menu de la semaine au compte Jow via POST /gol?type=recipeChosen.
+
+        Pour chaque repas planifié, envoie le recipeId à Jow pour l'ajouter
+        au menu de la semaine sur jow.fr. Retourne le nombre de recettes envoyées.
+        """
+        if not self.jow_token:
+            _LOGGER.warning("Envoi menu Jow impossible : non authentifié")
+            return 0
+
+        # Récupérer les recipe_ids des repas planifiés
+        recipe_ids = []
+        for day in self.week_dates(week_offset):
+            meal = self.get_meal(day)
+            if meal and meal.get("id"):
+                recipe_ids.append(meal["id"])
+
+        if not recipe_ids:
+            _LOGGER.warning("Aucun repas planifié à envoyer à Jow")
+            return 0
+
+        def _send(rid):
+            headers = self._jow_auth_headers()
+            headers["content-type"] = "text/plain;charset=UTF-8"
+            headers["x-jow-withmeta"] = "true"
+            resp = requests.post(
+                "https://api.jow.fr/public/gol",
+                headers=headers,
+                params={"type": "recipeChosen", "availabilityZoneId": "FR"},
+                data=json.dumps({"recipeId": rid}),
+                timeout=15,
+            )
+            return resp.status_code
+
+        sent = 0
+        for rid in recipe_ids:
+            try:
+                status = await self.hass.async_add_executor_job(_send, rid)
+                if status in (200, 204):
+                    sent += 1
+                else:
+                    _LOGGER.warning("Envoi recette %s à Jow : status %s", rid, status)
+            except Exception as err:
+                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", rid, err)
+
+        _LOGGER.info("Menu envoyé à Jow : %d/%d recettes", sent, len(recipe_ids))
+        return sent
 
     async def async_start_token_refresh(self) -> None:
         """Démarre la vérification périodique du token Jow.
