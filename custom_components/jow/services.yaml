@@ -183,3 +183,17 @@ meal_done:
         number:
           min: -4
           max: 4
+
+sync_calories:
+  name: Synchroniser les calories
+  description: >-
+    Récupère les calories par portion manquantes pour tous les repas planifiés
+    de la semaine en interrogeant l'API Jow.
+  fields:
+    week_offset:
+      name: Décalage de semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8

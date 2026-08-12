@@ -304,6 +304,29 @@ class JowManager:
         self.plan.pop(day.isoformat(), None)
         await self.async_save()
 
+    async def async_sync_calories(self, week_offset: int = 0) -> int:
+        """Récupère les calories manquantes pour tous les repas planifiés.
+
+        Parcourt la semaine demandée et fetch les calories depuis l'endpoint
+        détail de Jow pour chaque repas qui n'en a pas encore. Retourne le
+        nombre de repas mis à jour.
+        """
+        updated = 0
+        for day in self.week_dates(week_offset):
+            meal = self.get_meal(day)
+            if not meal or meal.get("calories") is not None:
+                continue
+            recipe_id = _safe_id(meal.get("id"))
+            if not recipe_id:
+                continue
+            calories = await self.async_fetch_calories(recipe_id)
+            if calories is not None:
+                meal["calories"] = calories
+                updated += 1
+        if updated:
+            await self.async_save()
+        return updated
+
     async def async_clear_week(self, week_offset: int = 0) -> None:
         for day in self.week_dates(week_offset):
             self.plan.pop(day.isoformat(), None)

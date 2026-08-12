@@ -161,6 +161,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return {"error": "Aucun repas planifié pour cette date"}
         return result
 
+    async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
+        """Récupère les calories manquantes pour tous les repas planifiés."""
+        updated = await manager.async_sync_calories(
+            call.data.get(ATTR_WEEK_OFFSET, 0)
+        )
+        return {"updated": updated}
+
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
             DOMAIN,
@@ -267,6 +274,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
             supports_response=SupportsResponse.ONLY,
         )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_CALORIES,
+            handle_sync_calories,
+            schema=vol.Schema(
+                {
+                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 
@@ -288,6 +306,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SYNC_FAVORITES,
                 SERVICE_SYNC_PREFERENCES,
                 SERVICE_MEAL_DONE,
+                SERVICE_SYNC_CALORIES,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok
