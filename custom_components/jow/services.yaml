@@ -146,6 +146,14 @@ suggest:
       selector:
         entity:
           domain: ai_task
+    week_offset:
+      name: Décalage de semaine
+      description: 0 = semaine en cours, 1 = semaine prochaine.
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
 
 sync_profile:
   name: Synchroniser le profil Jow

@@ -523,6 +523,7 @@ class JowManager:
         weather_entity: str | None = None,
         ai_entity: str | None = None,
         weekday: str | None = None,
+        week_offset: int = 0,
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -641,7 +642,7 @@ class JowManager:
         if weekday and weekday in WEEKDAYS and recipes:
             from datetime import date
             day_idx = WEEKDAYS.index(weekday)
-            target_date = self.week_dates(0)[day_idx]
+            target_date = self.week_dates(week_offset)[day_idx]
             chosen = recipes[0]
             # Récupérer les calories depuis l'endpoint détail
             recipe_id = _safe_id(chosen.get("id"))

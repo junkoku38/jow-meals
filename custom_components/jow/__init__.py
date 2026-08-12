@@ -130,6 +130,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             weather_entity=call.data.get(CONF_WEATHER_ENTITY),
             ai_entity=call.data.get(CONF_AI_ENTITY),
             weekday=call.data.get(ATTR_WEEKDAY),
+            week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
         )
         return {"recipes": results}
 
@@ -237,6 +238,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(CONF_WEATHER_ENTITY): cv.string,
                     vol.Optional(CONF_AI_ENTITY): cv.string,
                     vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
                 }
             ),
         )
