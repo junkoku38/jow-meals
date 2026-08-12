@@ -19,7 +19,7 @@ qui adapte les recettes aux allergies, préférences et météo.
 ### Via HACS (recommandé)
 
 1. **HACS → ⋮ → Dépôts personnalisés**
-2. URL : `https://github.com/junkoku38/ha-jow` · Catégorie : `Integration` → **Ajouter**
+2. URL : `https://github.com/junkoku38/jow-meals` · Catégorie : `Integration` → **Ajouter**
 3. **+ Explorer et télécharger des dépôts** → **Jow** → **Télécharger**
 4. Redémarrer Home Assistant
 5. **Paramètres → Appareils et services → + Ajouter une intégration → Jow**
