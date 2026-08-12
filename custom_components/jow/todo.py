@@ -74,7 +74,7 @@ class JowShoppingList(TodoListEntity):
             for item in self._manager.shopping
         ]
         self._attr_todo_items = items
-        _LOGGER.info("JowShoppingList: %d items loaded", len(items))
+        _LOGGER.debug("JowShoppingList: %d items loaded", len(items))
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
         await self._manager.async_add_item(item.summary or "")
@@ -135,7 +135,7 @@ class JowApprovedList(TodoListEntity):
             for item in self._manager.approved
         ]
         self._attr_todo_items = items
-        _LOGGER.info("JowApprovedList: %d items loaded", len(items))
+        _LOGGER.debug("JowApprovedList: %d items loaded", len(items))
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
         await self._manager.async_add_approved(item.summary or "")
