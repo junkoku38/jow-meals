@@ -596,9 +596,26 @@ class JowManager:
             query = criteria or "recette"
 
         _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
-        results = await self.async_search(query, limit=max(limit, 1))
+        results = await self.async_search(query, limit=max(limit * 3, 15))
         covers = covers or self.default_covers
         recipes = [_recipe_to_dict(r, covers) for r in results]
+
+        # Exclure les recettes déjà planifiées dans la semaine en cours et les
+        # 2 semaines précédentes pour éviter les répétitions.
+        deja_planifies = set()
+        for day_iso, meal in self.plan.items():
+            if meal and meal.get("id"):
+                deja_planifies.add(meal["id"])
+        if deja_planifies:
+            avant = len(recipes)
+            recipes = [r for r in recipes if r.get("id") not in deja_planifies]
+            _LOGGER.info(
+                "Recettes dédupliquées : %d exclues, %d restantes",
+                avant - len(recipes),
+                len(recipes),
+            )
+        # Garder le nombre demandé
+        recipes = recipes[:limit]
 
         # Filtrer les recettes contenant des ingrédients exclus du compte Jow
         if self.jow_token:
@@ -625,11 +642,18 @@ class JowManager:
             from datetime import date
             day_idx = WEEKDAYS.index(weekday)
             target_date = self.week_dates(0)[day_idx]
-            self.plan[target_date.isoformat()] = recipes[0]
+            chosen = recipes[0]
+            # Récupérer les calories depuis l'endpoint détail
+            recipe_id = _safe_id(chosen.get("id"))
+            if recipe_id:
+                calories = await self.async_fetch_calories(recipe_id)
+                if calories is not None:
+                    chosen["calories"] = calories
+            self.plan[target_date.isoformat()] = chosen
             await self.async_save()
             _LOGGER.info(
                 "Repas '%s' planifié sur %s via suggestion IA",
-                recipes[0].get("name", ""),
+                chosen.get("name", ""),
                 weekday,
             )
 
