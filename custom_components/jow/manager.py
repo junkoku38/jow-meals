@@ -233,17 +233,21 @@ class JowManager:
         """Récupère les calories par portion depuis l'endpoint détail de Jow.
 
         L'API de recherche ne retourne pas les calories : il faut interroger
-        l'endpoint /public/recipe/{id} qui expose nutritionalFats.
+        l'endpoint /public/recipe/{id} qui expose nutritionalFacts.
         """
         if not recipe_id or not _ID_RE.match(recipe_id):
             return None
 
         def _fetch():
             url = f"{_JOW_RECIPE_URL}/{recipe_id}"
-            resp = requests.get(url, headers=dict(_JOW_HEADERS), timeout=10)
+            # L'endpoint détail exige x-jow-withmeta: true (et non "1")
+            headers = dict(_JOW_HEADERS)
+            headers["x-jow-withmeta"] = "true"
+            headers["accept"] = "application/json, text/plain, */*"
+            resp = requests.get(url, headers=headers, timeout=10)
             resp.raise_for_status()
             data = resp.json()
-            # nutritionalFacts est une liste : [{id: "ENERC", label: "Calories", unit: "kcal", amount: N}, ...]
+            # nutritionalFacts : [{id: "ENERC", label: "Calories", unit: "kcal", amount: N}, ...]
             facts = data.get("nutritionalFacts", [])
             for fact in facts:
                 if fact.get("id") == "ENERC":
@@ -256,7 +260,7 @@ class JowManager:
         try:
             return await self.hass.async_add_executor_job(_fetch)
         except Exception as err:
-            _LOGGER.warning("Calories Jow indisponibles pour %s : %s", recipe_id, err)
+            _LOGGER.debug("Calories Jow indisponibles pour %s : %s", recipe_id, err)
             return None
 
     # ------------------------------------------------------------------
@@ -287,10 +291,8 @@ class JowManager:
         # Récupérer les calories depuis l'endpoint détail (l'API de recherche
         # ne les fournit pas).
         recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
-        _LOGGER.warning("plan_meal: recipe_id=%s, recipe keys=%s", recipe_id, sorted(recipe.keys())[:10])
         if recipe_id:
             calories = await self.async_fetch_calories(recipe_id)
-            _LOGGER.warning("plan_meal: calories fetched=%s", calories)
             if calories is not None:
                 recipe["_calories"] = calories
         stored = _recipe_to_dict(recipe, covers)
