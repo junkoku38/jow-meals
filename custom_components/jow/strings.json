@@ -3,14 +3,15 @@
     "step": {
       "user": {
         "title": "Jow",
-        "description": "Aucun identifiant n'est nécessaire. Choisissez le nombre de couverts par défaut.",
+        "description": "Aucun identifiant n'est nécessaire pour les recettes. Le refresh token Jow (optionnel) permet de synchroniser allergènes et préférences depuis votre compte.",
         "data": {
+          "name": "Nom de l'instance",
           "covers": "Couverts par défaut",
           "allergies": "Allergies / interdits (ex. fruits à coque, tomates)",
           "preferences": "Préférences (ex. méditerranéenne, végétarienne)",
           "ai_entity": "Agent IA ai_task (ex. ai_task.ollama_ai_task)",
           "weather_entity": "Capteur météo (ex. weather.maison)",
-          "jow_token": "Token Jow JWT (depuis jow.fr → F12 → Network → Authorization Bearer)"
+          "jow_refresh_token": "Refresh token Jow (F12 → Console → JSON.parse(localStorage.getItem('jow_store')).data.refreshToken)"
         }
       }
     },
@@ -25,7 +26,7 @@
           "preferences": "Préférences",
           "ai_entity": "Agent IA ai_task",
           "weather_entity": "Capteur météo",
-          "jow_token": "Token Jow JWT"
+          "jow_refresh_token": "Refresh token Jow"
         }
       }
     }

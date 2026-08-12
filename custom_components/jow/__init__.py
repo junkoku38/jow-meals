@@ -100,6 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         weather_entity=opts.get(CONF_WEATHER_ENTITY, ""),
         jow_token=jow_token,
         jow_refresh_token=opts.get(CONF_JOW_REFRESH_TOKEN, ""),
+        entry_id=entry.entry_id,
     )
     await manager.async_load()
     manager.purge_old()
@@ -170,28 +171,32 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     async def handle_sync_profile(call: ServiceCall) -> ServiceResponse:
         """Récupère le profil Jow de l'utilisateur connecté."""
-        profile = await manager.async_get_jow_profile()
+        mgr = _get_manager(hass, call, manager)
+        profile = await mgr.async_get_jow_profile()
         if profile is None:
             return {"error": "Non authentifié ou token invalide"}
         return {"profile": profile}
 
     async def handle_sync_favorites(call: ServiceCall) -> ServiceResponse:
         """Récupère les recettes favorites du compte Jow."""
-        favorites = await manager.async_get_jow_favorites()
+        mgr = _get_manager(hass, call, manager)
+        favorites = await mgr.async_get_jow_favorites()
         return {"recipes": favorites}
 
     async def handle_sync_preferences(call: ServiceCall) -> ServiceResponse:
         """Synchronise allergies et préférences depuis le compte Jow."""
-        await manager.async_sync_preferences_from_jow()
+        mgr = _get_manager(hass, call, manager)
+        await mgr.async_sync_preferences_from_jow()
         return {
-            "allergies": manager.allergies,
-            "preferences": manager.preferences,
+            "allergies": mgr.allergies,
+            "preferences": mgr.preferences,
         }
 
     async def handle_meal_done(call: ServiceCall) -> ServiceResponse:
         """Marque un repas comme fait et retire les ingrédients de la liste."""
-        day = _resolve_date(manager, call)
-        result = await manager.async_meal_done(day)
+        mgr = _get_manager(hass, call, manager)
+        day = _resolve_date(mgr, call)
+        result = await mgr.async_meal_done(day)
         if result is None:
             return {"error": "Aucun repas planifié pour cette date"}
         return result
@@ -212,153 +217,114 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return {"sent": sent, "message": f"{sent} recettes envoyées à Jow"}
 
-    if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_PLAN_MEAL,
-            handle_plan_meal,
-            schema=vol.Schema(
-                {
-                    vol.Required(ATTR_QUERY): cv.string,
-                    vol.Optional(ATTR_DATE): cv.date,
-                    vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                    vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
-                    vol.Optional(ATTR_CHOICE, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_CLEAR_MEAL,
-            handle_clear_meal,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_DATE): cv.date,
-                    vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_CLEAR_WEEK,
-            handle_clear_week,
-            schema=vol.Schema({vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int), vol.Optional(ATTR_ENTRY_NAME): cv.string}),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_REFRESH_SHOPPING_LIST,
-            handle_refresh_list,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                    vol.Optional("keep_checked", default=True): cv.boolean,
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SEARCH,
-            handle_search,
-            schema=vol.Schema(
-                {
-                    vol.Required(ATTR_QUERY): cv.string,
-                    vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
-                    vol.Optional(ATTR_COVERS): vol.Coerce(int),
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SUGGEST,
-            handle_suggest,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_CRITERIA): cv.string,
-                    vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
-                    vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
-                    vol.Optional(CONF_WEATHER_ENTITY): cv.string,
-                    vol.Optional(CONF_AI_ENTITY): cv.string,
-                    vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SYNC_PROFILE,
-            handle_sync_profile,
-            schema=vol.Schema({}),
-            supports_response=SupportsResponse.ONLY,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SYNC_FAVORITES,
-            handle_sync_favorites,
-            schema=vol.Schema({}),
-            supports_response=SupportsResponse.ONLY,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SYNC_PREFERENCES,
-            handle_sync_preferences,
-            schema=vol.Schema({}),
-            supports_response=SupportsResponse.ONLY,
-        )
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_MEAL_DONE,
-            handle_meal_done,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_DATE): cv.date,
-                    vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                }
-            ),
-            supports_response=SupportsResponse.ONLY,
-        )
-
-    # sync_calories est enregistré en dehors du bloc has_service pour
-    # garantir qu'il est disponible même après un reload de l'intégration.
-    if not hass.services.has_service(DOMAIN, SERVICE_SYNC_CALORIES):
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SYNC_CALORIES,
-            handle_sync_calories,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                }
-            ),
-            supports_response=SupportsResponse.ONLY,
-        )
-
-    if not hass.services.has_service(DOMAIN, SERVICE_SEND_MENU):
-        hass.services.async_register(
-            DOMAIN,
-            SERVICE_SEND_MENU,
-            handle_send_menu,
-            schema=vol.Schema(
-                {
-                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
-                    vol.Optional(ATTR_ENTRY_NAME): cv.string,
-                }
-            ),
-            supports_response=SupportsResponse.ONLY,
-        )
+    # Enregistrement des services (toujours ré-enregistrer pour que les
+    # handlers pointent vers le manager courant après reload ; _get_manager
+    # résout l'instance via entry_name).
+    hass.services.async_register(
+        DOMAIN, SERVICE_PLAN_MEAL, handle_plan_meal,
+        schema=vol.Schema({
+            vol.Required(ATTR_QUERY): cv.string,
+            vol.Optional(ATTR_DATE): cv.date,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+            vol.Optional(ATTR_CHOICE, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CLEAR_MEAL, handle_clear_meal,
+        schema=vol.Schema({
+            vol.Optional(ATTR_DATE): cv.date,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CLEAR_WEEK, handle_clear_week,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_REFRESH_SHOPPING_LIST, handle_refresh_list,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional("keep_checked", default=True): cv.boolean,
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SEARCH, handle_search,
+        schema=vol.Schema({
+            vol.Required(ATTR_QUERY): cv.string,
+            vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+            vol.Optional(ATTR_COVERS): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SUGGEST, handle_suggest,
+        schema=vol.Schema({
+            vol.Optional(ATTR_CRITERIA): cv.string,
+            vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+            vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+            vol.Optional(CONF_WEATHER_ENTITY): cv.string,
+            vol.Optional(CONF_AI_ENTITY): cv.string,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_PROFILE, handle_sync_profile,
+        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_FAVORITES, handle_sync_favorites,
+        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_PREFERENCES, handle_sync_preferences,
+        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_MEAL_DONE, handle_meal_done,
+        schema=vol.Schema({
+            vol.Optional(ATTR_DATE): cv.date,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SEND_MENU, handle_send_menu,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Décharge l'intégration."""
+    manager: JowManager = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if manager and manager._token_refresh_cancel:
+        manager._token_refresh_cancel()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id)

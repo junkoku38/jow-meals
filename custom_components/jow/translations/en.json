@@ -3,13 +3,15 @@
     "step": {
       "user": {
         "title": "Jow",
-        "description": "No credentials needed. Choose the default number of covers.",
+        "description": "No credentials needed for recipes. The Jow refresh token (optional) syncs allergies and preferences from your account.",
         "data": {
+          "name": "Instance name",
           "covers": "Default covers",
           "allergies": "Allergies / restrictions (e.g. nuts, tomatoes)",
           "preferences": "Preferences (e.g. mediterranean, vegetarian)",
           "ai_entity": "AI agent ai_task (e.g. ai_task.ollama_ai_task)",
-          "weather_entity": "Weather sensor (e.g. weather.home)"
+          "weather_entity": "Weather sensor (e.g. weather.home)",
+          "jow_refresh_token": "Jow refresh token (F12 → Console → JSON.parse(localStorage.getItem('jow_store')).data.refreshToken)"
         }
       }
     },
@@ -23,7 +25,8 @@
           "allergies": "Allergies / restrictions",
           "preferences": "Preferences",
           "ai_entity": "AI agent ai_task",
-          "weather_entity": "Weather sensor"
+          "weather_entity": "Weather sensor",
+          "jow_refresh_token": "Jow refresh token"
         }
       }
     }

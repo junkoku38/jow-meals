@@ -6,6 +6,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
 
 from .const import (
     CONF_AI_ENTITY,
@@ -57,7 +58,9 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_PREFERENCES, default=""): cv.string,
                     vol.Optional(CONF_AI_ENTITY, default=""): cv.string,
                     vol.Optional(CONF_WEATHER_ENTITY, default=""): cv.string,
-                    vol.Optional(CONF_JOW_REFRESH_TOKEN, default=""): cv.string,
+                    vol.Optional(CONF_JOW_REFRESH_TOKEN, default=""): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
                 }
             ),
         )
@@ -87,7 +90,9 @@ class JowOptionsFlow(OptionsFlow):
                     vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): cv.string,
                     vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): cv.string,
                     vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): cv.string,
-                    vol.Optional(CONF_JOW_REFRESH_TOKEN, default=opts.get(CONF_JOW_REFRESH_TOKEN, "")): cv.string,
+                    vol.Optional(CONF_JOW_REFRESH_TOKEN, default=opts.get(CONF_JOW_REFRESH_TOKEN, "")): TextSelector(
+                        TextSelectorConfig(type=TextSelectorType.PASSWORD)
+                    ),
                 }
             ),
         )

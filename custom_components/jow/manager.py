@@ -162,9 +162,12 @@ def _deduce_allergens(recipe: Any) -> tuple[list[int], str]:
             name = (taste.get("name") or "").lower().strip()
             if not name:
                 continue
-            # Match par inclusion (ex: "Pâtes" contient "pâtes")
+            # Match par inclusion du nom de taste dans la clé du mapping
+            # (ex: "Pâtes fraîches" contient "pâtes"). On évite l'inclusion
+            # inverse (name in key) qui génère des faux positifs (ex: "ble"
+            # dans "bleu" → fromage → lait au lieu de blé → gluten).
             for key, code in _TASTE_TO_INCO.items():
-                if key in name or name in key:
+                if key in name:
                     codes.add(code)
                     break
     return sorted(codes), "estimated"
@@ -246,8 +249,10 @@ class JowManager:
         weather_entity: str = "",
         jow_token: str = "",
         jow_refresh_token: str = "",
+        entry_id: str = "",
     ) -> None:
         self.hass = hass
+        self.entry_id = entry_id
         self.default_covers = default_covers
         self.allergies = allergies
         self.preferences = preferences
@@ -256,7 +261,10 @@ class JowManager:
         self.jow_token = jow_token
         self.jow_refresh_token = jow_refresh_token or jow_token  # fallback
         self._token_refresh_cancel: Any = None
-        self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        # Clé de stockage unique par instance pour éviter l'écrasement
+        # mutuel en multi-instance.
+        store_key = f"{STORAGE_KEY}.{entry_id}" if entry_id else STORAGE_KEY
+        self._store: Store = Store(hass, STORAGE_VERSION, store_key)
         # {"2026-08-10": {recette...}}
         self.plan: dict[str, dict] = {}
         # [{"uid": "...", "summary": "200 g de riz", "done": False}]
@@ -560,13 +568,18 @@ class JowManager:
         }
 
         # Retirer les items de la liste de courses correspondant aux ingrédients
-        # du repas terminé
+        # du repas terminé. Le summary de shopping est au format "200 g de riz" :
+        # on extrait le nom de l'ingrédient (après " de ") et on compare
+        # normalisé pour éviter les faux positifs (ex: "ail" dans "aileron").
         removed = []
         kept = []
         for item in self.shopping:
-            if self._norm(item["summary"]) in done_ingredients or any(
-                self._norm(ing) in item["summary"].lower() for ing in done_ingredients
-            ):
+            summary_norm = self._norm(item["summary"])
+            # Extraction du nom d'ingrédient : "200 g de riz" -> "riz"
+            item_name = summary_norm
+            if " de " in item_name:
+                item_name = item_name.split(" de ", 1)[1]
+            if item_name in done_ingredients or summary_norm in done_ingredients:
                 removed.append(item["summary"])
             else:
                 kept.append(item)
@@ -806,14 +819,21 @@ class JowManager:
 
     async def _async_persist_tokens(self) -> None:
         """Persiste les tokens rafraîchis dans la config entry pour survivre
-        aux redémarrages de Home Assistant."""
+        aux redémarrages de Home Assistant.
+
+        Ne touche que l'entry de cette instance (évite d'écraser les tokens
+        d'autres instances en multi-compte).
+        """
         try:
-            entries = self.hass.config_entries.async_entries(DOMAIN)
-            for entry in entries:
-                new_data = {**entry.data}
-                new_data[CONF_JOW_TOKEN] = self.jow_token
-                new_data[CONF_JOW_REFRESH_TOKEN] = self.jow_refresh_token
-                self.hass.config_entries.async_update_entry(entry, data=new_data)
+            if not self.entry_id:
+                return
+            entry = self.hass.config_entries.async_get_entry(self.entry_id)
+            if entry is None:
+                return
+            new_data = {**entry.data}
+            new_data[CONF_JOW_TOKEN] = self.jow_token
+            new_data[CONF_JOW_REFRESH_TOKEN] = self.jow_refresh_token
+            self.hass.config_entries.async_update_entry(entry, data=new_data)
         except Exception as err:
             _LOGGER.debug("Persistance tokens Jow impossible : %s", err)
 
@@ -1033,6 +1053,9 @@ class JowManager:
         if self.jow_refresh_token:
             refreshed = await self.async_refresh_jow_token()
             if refreshed:
+                # Re-sync des préférences (allergènes, habitudes) depuis le
+                # compte Jow pour rester à jour si l'utilisateur les modifie.
+                await self.async_sync_preferences_from_jow()
                 return
         # 2) Si le refresh a échoué, vérifier si le access token est encore
         # valide (il peut rester jusqu'à 48h de marge).
