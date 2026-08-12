@@ -436,11 +436,16 @@ class JowManager:
                         "instructions": instructions,
                         "entity_id": ai_ent,
                     },
-                    blocking=True,
                     return_response=True,
                 )
-                query = (response or {}).get("response", {}).get("data", "")
-                query = str(query).strip().strip('"').strip("'")
+                # response est un dict {ai_task_entity_id: {data: ...}}
+                if isinstance(response, dict):
+                    for _eid, val in response.items():
+                        if isinstance(val, dict) and "data" in val:
+                            query = str(val["data"]).strip().strip('"').strip("'")
+                            break
+                    if not query:
+                        query = str(response.get("response", {}).get("data", "")).strip().strip('"').strip("'")
             except Exception as err:
                 _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
                 query = ""
