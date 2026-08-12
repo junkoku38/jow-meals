@@ -217,7 +217,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(ATTR_COVERS): vol.Coerce(int),
                 }
             ),
-            supports_response=SupportsResponse.ONLY,
         )
         hass.services.async_register(
             DOMAIN,
