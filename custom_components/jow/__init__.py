@@ -601,6 +601,7 @@ class JowGoogleCallbackView(HomeAssistantView):
         id_token = body.get("credential")
         if not id_token:
             return web.json_response({"error": "Credential manquant"}, status=400)
+        _LOGGER.info("Credential Google reçu : longueur=%d, débute par=%s", len(id_token), id_token[:20])
         return await self._process_credential(request, id_token)
 
     async def get(self, request):
@@ -610,6 +611,7 @@ class JowGoogleCallbackView(HomeAssistantView):
         id_token = request.query.get("credential")
         if not id_token:
             return web.Response(text="Credential manquant", status=400)
+        _LOGGER.info("Credential Google reçu (GET) : longueur=%d, débute par=%s", len(id_token), id_token[:20])
         result = await self._process_credential(request, id_token)
         # Retourner une page HTML au lieu de JSON (pour GET)
         if result.status == 200:
