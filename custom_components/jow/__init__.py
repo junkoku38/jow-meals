@@ -39,6 +39,7 @@ from .const import (
     SERVICE_SYNC_PREFERENCES,
     SERVICE_MEAL_DONE,
     SERVICE_SYNC_PROFILE,
+    SERVICE_SYNC_CALORIES,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
