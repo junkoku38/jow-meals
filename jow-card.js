@@ -261,9 +261,7 @@ class JowCard extends HTMLElement {
       <ha-card class="card">
         <div class="header">
           <div class="title">${this._config.title}</div>
-          <button class="refresh-btn" title="Rafraîchir la liste de courses" onclick="this.getRootNode().host._refreshShopping()">
-            <ha-icon icon="mdi:cart" class="icon"></ha-icon>
-          </button>
+          <button class="refresh-btn" title="Rafraîchir la liste de courses" onclick="this.getRootNode().host._refreshShopping()">🛒</button>
         </div>
     `;
 
