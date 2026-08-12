@@ -108,12 +108,19 @@ suggest:
   description: >-
     Génère une requête de recherche adaptée aux allergies, préférences et
     météo via un agent ai_task, puis renvoie les recettes Jow correspondantes.
+    Si weekday est fourni, planifie automatiquement le premier résultat sur ce jour.
   fields:
     criteria:
       name: Demande
       description: Demande libre (ex. "plat frais pour canicule", "dîner léger").
       selector:
         text:
+    weekday:
+      name: Jour de la semaine
+      description: Si fourni, planifie le premier résultat sur ce jour.
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
     limit:
       name: Nombre de résultats
       default: 5

@@ -27,6 +27,7 @@ from .const import (
     SIGNAL_UPDATE,
     STORAGE_KEY,
     STORAGE_VERSION,
+    WEEKDAYS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -450,6 +451,7 @@ class JowManager:
         limit: int = 5,
         weather_entity: str | None = None,
         ai_entity: str | None = None,
+        weekday: str | None = None,
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -546,6 +548,19 @@ class JowManager:
                         len(results) - len(recipes),
                         len(recipes),
                     )
+
+        # Si un jour de la semaine est fourni, planifier le premier résultat
+        if weekday and weekday in WEEKDAYS and recipes:
+            from datetime import date
+            day_idx = WEEKDAYS.index(weekday)
+            target_date = self.week_dates(0)[day_idx]
+            self.plan[target_date.isoformat()] = recipes[0]
+            await self.async_save()
+            _LOGGER.info(
+                "Repas '%s' planifié sur %s via suggestion IA",
+                recipes[0].get("name", ""),
+                weekday,
+            )
 
         return recipes
 
