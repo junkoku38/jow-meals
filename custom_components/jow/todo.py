@@ -44,6 +44,7 @@ class JowShoppingList(TodoListEntity):
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
+        self._update_todo_items()
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
         )
@@ -113,6 +114,7 @@ class JowApprovedList(TodoListEntity):
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
+        self._update_todo_items()
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
         )
