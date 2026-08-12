@@ -236,6 +236,68 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
     }
 
 
+# Mapping ingrédient -> rayon pour trier la liste de courses.
+# Les noms sont matchés par inclusion (minuscules).
+_AISLE_ORDER = [
+    "Fruits & Légumes", "Boucherie", "Poissonnerie", "Crémerie",
+    "Épicerie salée", "Épicerie sucrée", "Surgelés", "Boissons", "Autre",
+]
+_AISLE_MAP: dict[str, str] = {
+    # Fruits & Légumes
+    "tomate": "Fruits & Légumes", "oignon": "Fruits & Légumes",
+    "ail": "Fruits & Légumes", "carotte": "Fruits & Légumes",
+    "pomme": "Fruits & Légumes", "courgette": "Fruits & Légumes",
+    "salade": "Fruits & Légumes", "épinard": "Fruits & Légumes",
+    "poireau": "Fruits & Légumes", "potiron": "Fruits & Légumes",
+    "citron": "Fruits & Légumes", "banane": "Fruits & Légumes",
+    "avocat": "Fruits & Légumes", "persil": "Fruits & Légumes",
+    "basilic": "Fruits & Légumes", "herbe": "Fruits & Légumes",
+    "champignon": "Fruits & Légumes", "poivron": "Fruits & Légumes",
+    "aubergine": "Fruits & Légumes", "brocoli": "Fruits & Légumes",
+    "fenouil": "Fruits & Légumes", "céleri": "Fruits & Légumes",
+    "endive": "Fruits & Légumes", "radis": "Fruits & Légumes",
+    # Boucherie
+    "poulet": "Boucherie", "bœuf": "Boucherie", "boeuf": "Boucherie",
+    "porc": "Boucherie", "veau": "Boucherie", "agneau": "Boucherie",
+    "lard": "Boucherie", "bacon": "Boucherie", "jambon": "Boucherie",
+    "saucisse": "Boucherie", "merguez": "Boucherie", "viande": "Boucherie",
+    # Poissonnerie
+    "saumon": "Poissonnerie", "thon": "Poissonnerie", "cabillaud": "Poissonnerie",
+    "crevette": "Poissonnerie", "moule": "Poissonnerie", "poisson": "Poissonnerie",
+    # Crémerie
+    "lait": "Crémerie", "beurre": "Crémerie", "crème": "Crémerie",
+    "creme": "Crémerie", "fromage": "Crémerie", "yaourt": "Crémerie",
+    "œuf": "Crémerie", "oeuf": "Crémerie", "mozzarella": "Crémerie",
+    "parmesan": "Crémerie", "emmental": "Crémerie", "feta": "Crémerie",
+    # Épicerie salée
+    "pâtes": "Épicerie salée", "pate": "Épicerie salée", "riz": "Épicerie salée",
+    "couscous": "Épicerie salée", "quinoa": "Épicerie salée",
+    "lentille": "Épicerie salée", "pois chiche": "Épicerie salée",
+    "haricot": "Épicerie salée", "tomate concentré": "Épicerie salée",
+    "sauce": "Épicerie salée", "huile": "Épicerie salée",
+    "olive": "Épicerie salée", "câpre": "Épicerie salée",
+    "bouillon": "Épicerie salée", "épice": "Épicerie salée",
+    # Épicerie sucrée
+    "sucre": "Épicerie sucrée", "miel": "Épicerie sucrée",
+    "chocolat": "Épicerie sucrée", "farine": "Épicerie sucrée",
+    "levure": "Épicerie sucrée", "vanille": "Épicerie sucrée",
+    # Surgelés
+    "surgelé": "Surgelés", "frozen": "Surgelés",
+    # Boissons
+    "vin": "Boissons", "bière": "Boissons", "biere": "Boissons",
+    "jus": "Boissons", "eau": "Boissons", "soda": "Boissons",
+}
+
+
+def _aisle_for(item: str) -> str:
+    """Détermine le rayon d'un article de la liste de courses."""
+    name = item.lower()
+    for key, aisle in _AISLE_MAP.items():
+        if key in name:
+            return aisle
+    return "Autre"
+
+
 class JowManager:
     """Garde le planning de la semaine et la liste de courses."""
 
@@ -389,6 +451,15 @@ class JowManager:
         self.plan.pop(day.isoformat(), None)
         await self.async_save()
 
+    async def async_copy_meal(self, from_day: date, to_day: date) -> dict | None:
+        """Copie un repas d'un jour vers un autre (pratique pour les restes)."""
+        meal = self.get_meal(from_day)
+        if not meal:
+            return None
+        self.plan[to_day.isoformat()] = meal
+        await self.async_save()
+        return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
+
     async def async_sync_calories(self, week_offset: int = 0) -> int:
         """Récupère les calories manquantes pour tous les repas planifiés.
 
@@ -457,7 +528,8 @@ class JowManager:
             else:
                 qty_str = f"{qty:g}"
                 lines.append(f"{qty_str} {unit} {name}".replace("  ", " ").strip())
-        return lines
+        # Trier par rayon si activé
+        return self._sort_by_aisle(lines)
 
     async def async_refresh_shopping_list(
         self, week_offset: int = 0, keep_checked: bool = False
@@ -493,6 +565,10 @@ class JowManager:
     def _norm(text: str) -> str:
         """Normalise un libellé pour comparer (minuscules, espaces)."""
         return " ".join(text.lower().split())
+
+    def _sort_by_aisle(self, lines: list[str]) -> list[str]:
+        """Trie la liste de courses par rayon (Fruits & Légumes, Boucherie, etc.)."""
+        return sorted(lines, key=lambda l: (_AISLE_ORDER.index(_aisle_for(l)), l.lower()))
 
     async def async_add_item(self, summary: str) -> None:
         if len(self.shopping) >= _MAX_ITEMS:
@@ -691,11 +767,14 @@ class JowManager:
         covers = covers or self.default_covers
         recipes = [_recipe_to_dict(r, covers) for r in results]
 
-        # Exclure les recettes déjà planifiées dans la semaine en cours et les
-        # 2 semaines précédentes pour éviter les répétitions.
+        # Exclure les recettes déjà planifiées dans les 4 dernières semaines
+        # (au lieu de tout l'historique) pour éviter les répétitions récentes
+        # tout en laissant revenir les plats après un mois.
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(weeks=4)).isoformat()
         deja_planifies = set()
         for day_iso, meal in self.plan.items():
-            if meal and meal.get("id"):
+            if meal and meal.get("id") and day_iso >= cutoff:
                 deja_planifies.add(meal["id"])
         if deja_planifies:
             avant = len(recipes)

@@ -23,6 +23,9 @@ from .const import (
     ATTR_WEEK_OFFSET,
     ATTR_WEEKDAY,
     ATTR_ENTRY_NAME,
+    ATTR_TO_DATE,
+    ATTR_TO_WEEKDAY,
+    ATTR_TO_WEEK_OFFSET,
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
     CONF_JOW_REFRESH_TOKEN,
@@ -78,6 +81,19 @@ def _resolve_date(manager: JowManager, call: ServiceCall) -> date:
 
     weekday = call.data.get(ATTR_WEEKDAY)
     offset = call.data.get(ATTR_WEEK_OFFSET, 0)
+    if weekday:
+        return manager.week_dates(offset)[WEEKDAYS.index(weekday)]
+    return date.today()
+
+
+def _resolve_to_date(manager: JowManager, call: ServiceCall) -> date:
+    """Résout la date cible pour copy_meal (to_date ou to_weekday)."""
+    if raw := call.data.get(ATTR_TO_DATE):
+        if isinstance(raw, date):
+            return raw
+        return datetime.fromisoformat(str(raw)).date()
+    weekday = call.data.get(ATTR_TO_WEEKDAY)
+    offset = call.data.get(ATTR_TO_WEEK_OFFSET, call.data.get(ATTR_WEEK_OFFSET, 0))
     if weekday:
         return manager.week_dates(offset)[WEEKDAYS.index(weekday)]
     return date.today()
@@ -201,6 +217,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return {"error": "Aucun repas planifié pour cette date"}
         return result
 
+    async def handle_copy_meal(call: ServiceCall) -> ServiceResponse:
+        """Copie un repas d'un jour vers un autre."""
+        mgr = _get_manager(hass, call, manager)
+        from_day = _resolve_date(mgr, call)
+        to_day = _resolve_to_date(mgr, call)
+        result = await mgr.async_copy_meal(from_day, to_day)
+        if result is None:
+            return {"error": "Aucun repas planifié sur la date source"}
+        return result
+
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
         mgr = _get_manager(hass, call, manager)
@@ -301,6 +327,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_COPY_MEAL, handle_copy_meal,
+        schema=vol.Schema({
+            vol.Optional(ATTR_DATE): cv.date,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_TO_DATE): cv.date,
+            vol.Optional(ATTR_TO_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_TO_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
         schema=vol.Schema({
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
@@ -341,7 +380,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SYNC_PREFERENCES,
                 SERVICE_MEAL_DONE,
                 SERVICE_SYNC_CALORIES,
-                SERVICE_SEND_MENU,
+    SERVICE_SEND_MENU,
+    SERVICE_COPY_MEAL,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

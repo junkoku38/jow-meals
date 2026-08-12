@@ -225,3 +225,59 @@ send_menu:
         number:
           min: -4
           max: 8
+
+copy_meal:
+  name: Copier un repas
+  description: >-
+    Copie un repas planifié d'un jour vers un autre (pratique pour les restes).
+  fields:
+    date:
+      name: Date source
+      description: Date du repas à copier (format YYYY-MM-DD).
+      selector:
+        date:
+    weekday:
+      name: Jour de la semaine source
+      description: Jour à copier (lundi, mardi…). Utilisé si date n'est pas fourni.
+      selector:
+        select:
+          options:
+            - lundi
+            - mardi
+            - mercredi
+            - jeudi
+            - vendredi
+            - samedi
+            - dimanche
+    week_offset:
+      name: Décalage semaine source
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    to_date:
+      name: Date cible
+      description: Date vers laquelle copier le repas.
+      selector:
+        date:
+    to_weekday:
+      name: Jour cible
+      description: Jour vers lequel copier.
+      selector:
+        select:
+          options:
+            - lundi
+            - mardi
+            - mercredi
+            - jeudi
+            - vendredi
+            - samedi
+            - dimanche
+    to_week_offset:
+      name: Décalage semaine cible
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
