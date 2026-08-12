@@ -372,11 +372,22 @@ class JowTokenView(HomeAssistantView):
         from aiohttp import web
         import json
 
+        # Headers CORS pour permettre l'appel depuis jow.fr (bookmarklet)
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        }
+
+        # Répondre au preflight OPTIONS
+        if request.method == "OPTIONS":
+            return web.Response(status=204, headers=cors_headers)
+
         try:
             body = await request.json()
             token = body.get("token", "")
             if not token or not token.startswith("eyJ"):
-                return web.json_response({"error": "Token invalide"}, status=400)
+                return web.json_response({"error": "Token invalide"}, status=400, headers=cors_headers)
 
             # Mettre à jour le token dans le manager
             self._manager.jow_token = token
@@ -397,7 +408,7 @@ class JowTokenView(HomeAssistantView):
                     "Jow - Connexion réussie",
                     "jow_token_received",
                 )
-                return web.json_response({"status": "ok", "message": "Token valide"})
+                return web.json_response({"status": "ok", "message": "Token valide"}, headers=cors_headers)
             else:
                 persistent_notification.async_create(
                     self._manager.hass,
@@ -405,7 +416,7 @@ class JowTokenView(HomeAssistantView):
                     "Jow - Token invalide",
                     "jow_token_invalid",
                 )
-                return web.json_response({"error": "Token invalide"}, status=401)
+                return web.json_response({"error": "Token invalide"}, status=401, headers=cors_headers)
 
         except Exception as err:
             _LOGGER.error("Erreur lors de la réception du token Jow : %s", err)
