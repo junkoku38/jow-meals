@@ -65,3 +65,4 @@ JOW_MENU_URL = f"{JOW_API_BASE}/menu/week"
 JOW_SHOPPING_URL = f"{JOW_API_BASE}/shoppinglist"
 JOW_ORDERS_URL = f"{JOW_API_BASE}/orders"
 JOW_TOKEN_REFRESH_INTERVAL = 40 * 3600  # 40h (token valide 48h)
+# sync_calories service
