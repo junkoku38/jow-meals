@@ -256,7 +256,7 @@ class JowManager:
         try:
             return await self.hass.async_add_executor_job(_fetch)
         except Exception as err:
-            _LOGGER.debug("Calories Jow indisponibles pour %s : %s", recipe_id, err)
+            _LOGGER.warning("Calories Jow indisponibles pour %s : %s", recipe_id, err)
             return None
 
     # ------------------------------------------------------------------
@@ -287,8 +287,10 @@ class JowManager:
         # Récupérer les calories depuis l'endpoint détail (l'API de recherche
         # ne les fournit pas).
         recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
+        _LOGGER.warning("plan_meal: recipe_id=%s, recipe keys=%s", recipe_id, sorted(recipe.keys())[:10])
         if recipe_id:
             calories = await self.async_fetch_calories(recipe_id)
+            _LOGGER.warning("plan_meal: calories fetched=%s", calories)
             if calories is not None:
                 recipe["_calories"] = calories
         stored = _recipe_to_dict(recipe, covers)
