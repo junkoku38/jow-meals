@@ -66,4 +66,7 @@ JOW_MENU_URL = f"{JOW_API_BASE}/menu/week"
 JOW_SHOPPING_URL = f"{JOW_API_BASE}/shoppinglist"
 JOW_ORDERS_URL = f"{JOW_API_BASE}/orders"
 JOW_TOKEN_REFRESH_INTERVAL = 40 * 3600  # 40h (token valide 48h)
+
+# Google Sign-In (récupéré depuis jow.fr)
+GOOGLE_CLIENT_ID = "908774541818-9tvsq3p6lggasvdnc3iq6i4mckf9e3ru.apps.googleusercontent.com"
 # sync_calories service

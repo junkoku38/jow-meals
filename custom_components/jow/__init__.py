@@ -30,6 +30,7 @@ from .const import (
     CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
     DOMAIN,
+    GOOGLE_CLIENT_ID,
     SERVICE_CLEAR_MEAL,
     SERVICE_CLEAR_WEEK,
     SERVICE_PLAN_MEAL,
@@ -104,6 +105,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Enregistrer le endpoint HTTP pour recevoir le JWT depuis le bookmarklet
     hass.http.register_view(JowTokenView(manager))
+    # Enregistrer les endpoints pour le flow OAuth2 Google
+    hass.http.register_view(JowGoogleAuthView())
+    hass.http.register_view(JowGoogleCallbackView(hass.data.get(DOMAIN, {})))
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -406,3 +410,143 @@ class JowTokenView(HomeAssistantView):
         except Exception as err:
             _LOGGER.error("Erreur lors de la réception du token Jow : %s", err)
             return web.json_response({"error": str(err)}, status=500)
+
+
+class JowGoogleAuthView(HomeAssistantView):
+    """Démarre le flow OAuth2 Google pour récupérer un credential.
+
+    URL: /api/jow/google_auth
+    Redirige vers Google, puis Google redirige vers /api/jow/google_callback
+    avec le credential (ID token).
+    """
+
+    url = "/api/jow/google_auth"
+    name = "api:jow:google_auth"
+    requires_auth = False  # l'utilisateur clique sur ce lien depuis HA
+
+    async def get(self, request):
+        from aiohttp import web
+        from urllib.parse import urlencode
+
+        # L'URL de callback (vers HA)
+        ha_url = f"{request.scheme}://{request.host}"
+        callback_url = f"{ha_url}/api/jow/google_callback"
+
+        # Construire l'URL d'autorisation Google
+        params = urlencode({
+            "client_id": GOOGLE_CLIENT_ID,
+            "redirect_uri": callback_url,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "prompt": "consent",
+        })
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+        return web.HTTPFound(auth_url)
+
+
+class JowGoogleCallbackView(HomeAssistantView):
+    """Reçoit le credential Google et l'échange contre un token Jow.
+
+    URL: /api/jow/google_callback
+    Google redirige ici avec ?code=... qu'on échange contre un ID token,
+    puis on envoie l'ID token à Jow pour obtenir le JWT Jow.
+    """
+
+    url = "/api/jow/google_callback"
+    name = "api:jow:google_callback"
+    requires_auth = False
+
+    def __init__(self, managers: dict) -> None:
+        self._managers = managers
+
+    async def get(self, request):
+        from aiohttp import web
+        import requests as req
+
+        code = request.query.get("code")
+        if not code:
+            return web.Response(text="Code d'autorisation manquant", status=400)
+
+        ha_url = f"{request.scheme}://{request.host}"
+        callback_url = f"{ha_url}/api/jow/google_callback"
+
+        # 1. Échanger le code contre un ID token Google
+        token_resp = await request.app["hass"].async_add_executor_job(
+            lambda: req.post(
+                "https://oauth2.googleapis.com/token",
+                data={
+                    "client_id": GOOGLE_CLIENT_ID,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": callback_url,
+                },
+                timeout=15,
+            )
+        )
+
+        if token_resp.status_code != 200:
+            _LOGGER.error("Échange code Google échoué : %s", token_resp.text[:200])
+            return web.Response(text="Échange Google échoué", status=400)
+
+        token_data = token_resp.json()
+        id_token = token_data.get("id_token")
+        if not id_token:
+            return web.Response(text="ID token Google manquant", status=400)
+
+        # 2. Envoyer l'ID token à Jow pour obtenir un JWT Jow
+        jow_resp = await request.app["hass"].async_add_executor_job(
+            lambda: req.post(
+                "https://api.jow.fr/public/auth",
+                headers={
+                    "accept": "application/json",
+                    "content-type": "application/json",
+                    "origin": "https://jow.fr",
+                    "referer": "https://jow.fr/",
+                    "x-jow-withmeta": "true",
+                },
+                params={"createIfNotExist": "true"},
+                json={"googleIdToken": id_token},
+                timeout=15,
+            )
+        )
+
+        if jow_resp.status_code != 200:
+            _LOGGER.error("Auth Jow Google échoué : %s", jow_resp.text[:200])
+            return web.Response(text="Auth Jow échouée", status=400)
+
+        jow_data = jow_resp.json().get("data", {})
+        jow_token = jow_data.get("accessToken")
+        if not jow_token:
+            return web.Response(text="Token Jow manquant dans la réponse", status=400)
+
+        # 3. Stocker le token dans le premier manager disponible
+        hass = request.app["hass"]
+        manager = None
+        for entry_id, mgr in hass.data.get(DOMAIN, {}).items():
+            manager = mgr
+            break
+
+        if not manager:
+            return web.Response(text="Aucune instance Jow configurée", status=400)
+
+        manager.jow_token = jow_token
+        ok = await manager.async_check_token_validity()
+        if ok:
+            await manager.async_sync_preferences_from_jow()
+            await manager.async_start_token_refresh()
+            persistent_notification.async_create(
+                hass,
+                "Connexion Google réussie ! Token Jow récupéré automatiquement. "
+                "Allergènes et préférences synchronisés.",
+                "Jow - Connexion Google réussie",
+                "jow_google_auth_success",
+            )
+            return web.Response(text="✅ Connexion Google réussie ! Token Jow récupéré. Vous pouvez fermer cette page.", content_type="text/html")
+        else:
+            persistent_notification.async_create(
+                hass,
+                "Token Jow reçu mais invalide après auth Google.",
+                "Jow - Token invalide",
+                "jow_google_auth_invalid",
+            )
+            return web.Response(text="Token Jow invalide", status=400)
