@@ -680,26 +680,49 @@ class JowManager:
             return []
 
     async def async_start_token_refresh(self) -> None:
-        """Démarre le rafraîchissement automatique du token Jow."""
+        """Démarre la vérification périodique du token Jow.
+
+        Le token Jow n'est pas requis pour le fonctionnement de base
+        (recherche publique de recettes). Il sert uniquement à synchroniser
+        les allergènes et préférences du compte Jow. On ne rafraîchit pas
+        automatiquement (la session provider expire), on vérifie juste
+        la validité périodiquement.
+        """
         if not self.jow_token:
             return
 
         from homeassistant.helpers.event import async_track_time_interval
 
-        # Rafraîchir immédiatement, puis toutes les 40h
-        await self.async_refresh_jow_token()
-
         if self._token_refresh_cancel:
             self._token_refresh_cancel()
+        # Vérifier toutes les 6h si le token est encore valide
         self._token_refresh_cancel = async_track_time_interval(
             self.hass,
-            self._async_refresh_token_callback,
-            timedelta(seconds=JOW_TOKEN_REFRESH_INTERVAL),
+            self._async_check_token_callback,
+            timedelta(hours=6),
         )
 
-    async def _async_refresh_token_callback(self, now=None) -> None:
-        """Callback périodique pour rafraîchir le token Jow."""
-        await self.async_refresh_jow_token()
+    async def _async_check_token_callback(self, now=None) -> None:
+        """Vérifie périodiquement si le token Jow est encore valide.
+
+        Si le token a expiré, notifie l'utilisateur pour qu'il le renouvelle
+        via le bookmarklet. Les recettes publiques continuent de fonctionner.
+        """
+        if not self.jow_token:
+            return
+        valid = await self.async_check_token_validity()
+        if not valid:
+            from homeassistant.components import persistent_notification
+            persistent_notification.async_create(
+                self.hass,
+                "Le token Jow a expiré. Les recettes publiques continuent de fonctionner, "
+                "mais les allergènes ne sont plus synchronisés. Reconnectez-vous sur jow.fr "
+                "et cliquez sur le bookmarklet Jow → HA pour renouveler le token.",
+                "Jow - Token expiré",
+                "jow_token_expired",
+            )
+            # Vider le token pour éviter les appels inutiles
+            self.jow_token = ""
 
     async def async_check_token_validity(self) -> bool:
         """Vérifie si le token Jow est encore valide."""

@@ -75,11 +75,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await manager.async_load()
     manager.purge_old()
-    # Démarrer le rafraîchissement automatique du token Jow si configuré
+    # Vérifier le token Jow et synchroniser les préférences si valide
     if manager.is_authenticated:
+        if await manager.async_check_token_validity():
+            await manager.async_sync_preferences_from_jow()
+        # Démarrer la vérification périodique du token
         await manager.async_start_token_refresh()
-        # Synchroniser allergies et préférences depuis le compte Jow
-        await manager.async_sync_preferences_from_jow()
 
     # Enregistrer le endpoint HTTP pour recevoir le JWT depuis le bookmarklet
     hass.http.register_view(JowTokenView(manager))
@@ -299,22 +300,18 @@ class JowTokenView(HomeAssistantView):
             self._manager.jow_token = token
             _LOGGER.info("Token Jow reçu via bookmarklet")
 
-            # Rafraîchir immédiatement pour valider
-            ok = await self._manager.async_refresh_jow_token()
-            if not ok:
-                # Le refresh peut échouer si la session provider a expiré,
-                # mais le token lui-même est valide 48h
-                ok = await self._manager.async_check_token_validity()
+            # Vérifier la validité du token
+            ok = await self._manager.async_check_token_validity()
 
             if ok:
-                # Synchroniser les préférences
+                # Synchroniser les préférences (allergènes, habitudes)
                 await self._manager.async_sync_preferences_from_jow()
-                # Démarrer le rafraîchissement auto
+                # Démarrer la vérification périodique
                 await self._manager.async_start_token_refresh()
                 # Notification de succès
                 persistent_notification.async_create(
                     self._manager.hass,
-                    "Token Jow reçu et validé. Connexion au compte Courses U active.",
+                    "Token Jow reçu et validé. Allergènes et préférences synchronisés depuis votre compte Jow.",
                     "Jow - Connexion réussie",
                     "jow_token_received",
                 )
@@ -322,7 +319,7 @@ class JowTokenView(HomeAssistantView):
             else:
                 persistent_notification.async_create(
                     self._manager.hass,
-                    "Token Jow reçu mais invalide. Vérifiez que vous êtes connecté sur jow.fr.",
+                    "Token Jow reçu mais invalide ou expiré. Vérifiez que vous êtes connecté sur jow.fr.",
                     "Jow - Token invalide",
                     "jow_token_invalid",
                 )

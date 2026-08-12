@@ -31,17 +31,34 @@ qui adapte les recettes aux allergies, préférences et météo.
 2. Redémarrer Home Assistant.
 3. **Paramètres → Appareils et services → Ajouter une intégration → Jow**.
 
-## Configuration
+## Connexion au compte Jow (optionnelle)
 
-Lors de l'ajout (ou via **Paramètres → Appareils et services → Jow → Configurer**) :
+La connexion au compte Jow est **optionnelle**. Sans token, le plugin fonctionne
+avec l'API publique (recherche de recettes, planning, liste de courses, suggestions IA).
 
-| Champ | Rôle | Exemple |
-|---|---|---|
-| Couverts par défaut | Nombre de couverts pour les recettes | `2` |
-| Allergies / interdits | Évités par l'IA lors des suggestions | `fruits à coque, tomates` |
-| Préférences | Prises en compte par l'IA | `méditerranéenne, végétarienne` |
-| Agent IA ai_task | Entité `ai_task.*` pour les suggestions | `ai_task.ollama_ai_task` |
-| Capteur météo | Entité `weather.*` pour contextualiser | `weather.maison` |
+Avec un token Jow, le plugin synchronise en plus :
+- **Allergènes** depuis votre compte Jow (ex. coriandre, fruits à coque, poisson)
+- **Habitudes alimentaires** (végétarien, sans gluten, etc.)
+- **Foyer** (nombre d'adultes, enfants)
+- **Favoris** et **liste de courses** Jow
+
+Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions de
+`jow.suggest` : les recettes contenant un ingrédient exclu n'apparaissent pas.
+
+### Comment ça marche
+
+1. Le plugin utilise l'**API publique** Jow pour les recettes (pas de token requis)
+2. Le token Jow sert uniquement à **synchroniser les allergènes/préférences**
+3. Le token est valide **48h** — pas de rafraîchissement automatique (la session
+   provider Courses U expire)
+4. Quand le token expire, le plugin continue de fonctionner normalement avec
+   l'API publique + les derniers allergènes syncés
+5. Pour renouveler : cliquez sur le bookmarklet `Jow → HA` depuis jow.fr
+
+### Installation du bookmarklet
+
+Voir [`docs/bookmarklet.md`](docs/bookmarklet.md) pour le bookmarklet qui capture
+automatiquement le token Jow depuis votre navigateur et l'envoie au plugin.
 
 ## Entités créées
 
