@@ -17,6 +17,12 @@ from homeassistant.helpers.storage import Store
 
 from .const import (
     DEFAULT_COVERS,
+    JOW_AUTH_URL,
+    JOW_FAVORITES_URL,
+    JOW_MENU_URL,
+    JOW_PROFILE_URL,
+    JOW_SHOPPING_URL,
+    JOW_TOKEN_REFRESH_INTERVAL,
     RECIPE_BASE_URL,
     SIGNAL_UPDATE,
     STORAGE_KEY,
@@ -157,6 +163,7 @@ class JowManager:
         preferences: str = "",
         ai_entity: str = "",
         weather_entity: str = "",
+        jow_token: str = "",
     ) -> None:
         self.hass = hass
         self.default_covers = default_covers
@@ -164,6 +171,8 @@ class JowManager:
         self.preferences = preferences
         self.ai_entity = ai_entity
         self.weather_entity = weather_entity
+        self.jow_token = jow_token
+        self._token_refresh_cancel: Any = None
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         # {"2026-08-10": {recette...}}
         self.plan: dict[str, dict] = {}
@@ -465,3 +474,162 @@ class JowManager:
         results = await self.async_search(query, limit=max(limit, 1))
         covers = covers or self.default_covers
         return [_recipe_to_dict(r, covers) for r in results]
+
+    # ------------------------------------------------------------------
+    # Connexion au compte Jow (token JWT + rafraîchissement automatique)
+    # ------------------------------------------------------------------
+    def _jow_auth_headers(self) -> dict:
+        """Headers d'authentification pour l'API Jow avec le token JWT."""
+        return {
+            "accept": "application/json",
+            "accept-language": "fr",
+            "content-type": "application/json",
+            "x-jow-withmeta": "1",
+            "origin": "https://jow.fr",
+            "authorization": f"Bearer {self.jow_token}" if self.jow_token else "",
+        }
+
+    @property
+    def is_authenticated(self) -> bool:
+        """True si un token Jow est configuré."""
+        return bool(self.jow_token)
+
+    async def async_refresh_jow_token(self) -> bool:
+        """Rafraîchit le token JWT Jow via POST /auth?createIfNotExist=false.
+
+        Le token est valide 48h ; on le rafraîchit toutes les 40h.
+        """
+        if not self.jow_token:
+            return False
+
+        def _refresh():
+            headers = self._jow_auth_headers()
+            resp = requests.post(
+                JOW_AUTH_URL,
+                headers=headers,
+                params={"createIfNotExist": "false"},
+                json={"provider": "coursesu"},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
+            return data.get("accessToken")
+
+        try:
+            new_token = await self.hass.async_add_executor_job(_refresh)
+            if new_token:
+                self.jow_token = new_token
+                _LOGGER.info("Token Jow rafraîchi avec succès")
+                return True
+        except Exception as err:
+            _LOGGER.warning("Rafraîchissement token Jow échoué : %s", err)
+        return False
+
+    async def async_get_jow_profile(self) -> dict | None:
+        """Récupère le profil Jow de l'utilisateur connecté."""
+        if not self.jow_token:
+            return None
+
+        def _get():
+            headers = self._jow_auth_headers()
+            resp = requests.get(JOW_PROFILE_URL, headers=headers, timeout=15)
+            resp.raise_for_status()
+            return resp.json().get("data", {})
+
+        try:
+            return await self.hass.async_add_executor_job(_get)
+        except Exception as err:
+            _LOGGER.warning("Récupération profil Jow échouée : %s", err)
+            return None
+
+    async def async_get_jow_favorites(self) -> list[dict]:
+        """Récupère les recettes favorites du compte Jow."""
+        if not self.jow_token:
+            return []
+
+        def _get():
+            headers = self._jow_auth_headers()
+            resp = requests.get(
+                JOW_FAVORITES_URL,
+                headers=headers,
+                params={"availabilityZoneId": "FR", "limit": 20},
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return resp.json().get("data", {}).get("recipes", [])
+
+        try:
+            return await self.hass.async_add_executor_job(_get) or []
+        except Exception as err:
+            _LOGGER.warning("Récupération favoris Jow échouée : %s", err)
+            return []
+
+    async def async_get_jow_shoppinglist(self) -> dict | None:
+        """Récupère la liste de courses du compte Jow."""
+        if not self.jow_token:
+            return None
+
+        def _get():
+            headers = self._jow_auth_headers()
+            resp = requests.get(
+                JOW_SHOPPING_URL,
+                headers=headers,
+                params={"availabilityZoneId": "FR"},
+                timeout=15,
+            )
+            if resp.status_code == 204:
+                return {}
+            resp.raise_for_status()
+            return resp.json().get("data", {})
+
+        try:
+            return await self.hass.async_add_executor_job(_get)
+        except Exception as err:
+            _LOGGER.warning("Récupération liste de courses Jow échouée : %s", err)
+            return None
+
+    async def async_get_jow_menu(self) -> list[dict]:
+        """Récupère le menu de la semaine suggéré par Jow."""
+        if not self.jow_token:
+            return []
+
+        def _get():
+            headers = self._jow_auth_headers()
+            resp = requests.get(
+                JOW_MENU_URL,
+                headers=headers,
+                params={"availabilityZoneId": "FR"},
+                timeout=15,
+            )
+            if resp.status_code == 204:
+                return []
+            resp.raise_for_status()
+            return resp.json().get("data", {}).get("recipes", [])
+
+        try:
+            return await self.hass.async_add_executor_job(_get) or []
+        except Exception as err:
+            _LOGGER.warning("Récupération menu Jow échouée : %s", err)
+            return []
+
+    async def async_start_token_refresh(self) -> None:
+        """Démarre le rafraîchissement automatique du token Jow."""
+        if not self.jow_token:
+            return
+
+        from homeassistant.helpers.event import async_track_time_interval
+
+        # Rafraîchir immédiatement, puis toutes les 40h
+        await self.async_refresh_jow_token()
+
+        if self._token_refresh_cancel:
+            self._token_refresh_cancel()
+        self._token_refresh_cancel = async_track_time_interval(
+            self.hass,
+            self._async_refresh_token_callback,
+            timedelta(seconds=JOW_TOKEN_REFRESH_INTERVAL),
+        )
+
+    async def _async_refresh_token_callback(self, now=None) -> None:
+        """Callback périodique pour rafraîchir le token Jow."""
+        await self.async_refresh_jow_token()

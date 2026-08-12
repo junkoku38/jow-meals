@@ -22,6 +22,7 @@ from .const import (
     ATTR_WEEKDAY,
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
+    CONF_JOW_TOKEN,
     CONF_PREFERENCES,
     CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
@@ -32,6 +33,8 @@ from .const import (
     SERVICE_REFRESH_SHOPPING_LIST,
     SERVICE_SEARCH,
     SERVICE_SUGGEST,
+    SERVICE_SYNC_FAVORITES,
+    SERVICE_SYNC_PROFILE,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -65,9 +68,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         preferences=opts.get(CONF_PREFERENCES, ""),
         ai_entity=opts.get(CONF_AI_ENTITY, ""),
         weather_entity=opts.get(CONF_WEATHER_ENTITY, ""),
+        jow_token=opts.get(CONF_JOW_TOKEN, ""),
     )
     await manager.async_load()
     manager.purge_old()
+    # Démarrer le rafraîchissement automatique du token Jow si configuré
+    if manager.is_authenticated:
+        await manager.async_start_token_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -114,6 +121,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ai_entity=call.data.get(CONF_AI_ENTITY),
         )
         return {"recipes": results}
+
+    async def handle_sync_profile(call: ServiceCall) -> ServiceResponse:
+        """Récupère le profil Jow de l'utilisateur connecté."""
+        profile = await manager.async_get_jow_profile()
+        if profile is None:
+            return {"error": "Non authentifié ou token invalide"}
+        return {"profile": profile}
+
+    async def handle_sync_favorites(call: ServiceCall) -> ServiceResponse:
+        """Récupère les recettes favorites du compte Jow."""
+        favorites = await manager.async_get_jow_favorites()
+        return {"recipes": favorites}
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
@@ -188,6 +207,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
             supports_response=SupportsResponse.ONLY,
         )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_PROFILE,
+            handle_sync_profile,
+            schema=vol.Schema({}),
+            supports_response=SupportsResponse.ONLY,
+        )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_FAVORITES,
+            handle_sync_favorites,
+            schema=vol.Schema({}),
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 
@@ -205,6 +238,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_REFRESH_SHOPPING_LIST,
                 SERVICE_SEARCH,
                 SERVICE_SUGGEST,
+                SERVICE_SYNC_PROFILE,
+                SERVICE_SYNC_FAVORITES,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

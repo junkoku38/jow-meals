@@ -38,6 +38,8 @@ ATTR_WEEK_OFFSET = "week_offset"
 
 # Service jow.suggest
 SERVICE_SUGGEST = "suggest"
+SERVICE_SYNC_PROFILE = "sync_profile"
+SERVICE_SYNC_FAVORITES = "sync_favorites"
 ATTR_CRITERIA = "criteria"
 ATTR_WEATHER_ENTITY = "weather_entity"
 ATTR_AI_ENTITY = "ai_entity"
@@ -49,3 +51,14 @@ CONF_ALLERGIES = "allergies"
 CONF_PREFERENCES = "preferences"
 CONF_AI_ENTITY = "ai_entity"
 CONF_WEATHER_ENTITY = "weather_entity"
+CONF_JOW_TOKEN = "jow_token"
+
+# API Jow auth
+JOW_API_BASE = "https://api.jow.fr/public"
+JOW_AUTH_URL = f"{JOW_API_BASE}/auth"
+JOW_PROFILE_URL = f"{JOW_API_BASE}/profile"
+JOW_FAVORITES_URL = f"{JOW_API_BASE}/recipes/favorites"
+JOW_MENU_URL = f"{JOW_API_BASE}/menu/week"
+JOW_SHOPPING_URL = f"{JOW_API_BASE}/shoppinglist"
+JOW_ORDERS_URL = f"{JOW_API_BASE}/orders"
+JOW_TOKEN_REFRESH_INTERVAL = 40 * 3600  # 40h (token valide 48h)

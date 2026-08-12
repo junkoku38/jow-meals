@@ -9,6 +9,7 @@ from homeassistant.core import callback
 from .const import (
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
+    CONF_JOW_TOKEN,
     CONF_PREFERENCES,
     CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
@@ -35,6 +36,7 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_PREFERENCES: user_input.get(CONF_PREFERENCES, ""),
                     CONF_AI_ENTITY: user_input.get(CONF_AI_ENTITY, ""),
                     CONF_WEATHER_ENTITY: user_input.get(CONF_WEATHER_ENTITY, ""),
+                    CONF_JOW_TOKEN: user_input.get(CONF_JOW_TOKEN, ""),
                 },
             )
 
@@ -49,6 +51,7 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_PREFERENCES): vol.Text(),
                     vol.Optional(CONF_AI_ENTITY): vol.Text(),
                     vol.Optional(CONF_WEATHER_ENTITY): vol.Text(),
+                    vol.Optional(CONF_JOW_TOKEN): vol.Text(),
                 }
             ),
         )
@@ -78,6 +81,7 @@ class JowOptionsFlow(OptionsFlow):
                     vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): vol.Text(),
                     vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): vol.Text(),
                     vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): vol.Text(),
+                    vol.Optional(CONF_JOW_TOKEN, default=opts.get(CONF_JOW_TOKEN, "")): vol.Text(),
                 }
             ),
         )

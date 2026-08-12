@@ -9,7 +9,8 @@
           "allergies": "Allergies / interdits (ex. fruits à coque, tomates)",
           "preferences": "Préférences (ex. méditerranéenne, végétarienne)",
           "ai_entity": "Agent IA ai_task (ex. ai_task.ollama_ai_task)",
-          "weather_entity": "Capteur météo (ex. weather.maison)"
+          "weather_entity": "Capteur météo (ex. weather.maison)",
+          "jow_token": "Token Jow JWT (depuis jow.fr → F12 → Network → Authorization Bearer)"
         }
       }
     },
@@ -23,7 +24,8 @@
           "allergies": "Allergies / interdits",
           "preferences": "Préférences",
           "ai_entity": "Agent IA ai_task",
-          "weather_entity": "Capteur météo"
+          "weather_entity": "Capteur météo",
+          "jow_token": "Token Jow JWT"
         }
       }
     }

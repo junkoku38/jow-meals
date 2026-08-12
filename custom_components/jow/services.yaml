@@ -139,3 +139,11 @@ suggest:
       selector:
         entity:
           domain: ai_task
+
+sync_profile:
+  name: Synchroniser le profil Jow
+  description: Récupère le profil du compte Jow connecté (nom, email, foyer, habitudes).
+
+sync_favorites:
+  name: Synchroniser les favoris Jow
+  description: Récupère les recettes favorites du compte Jow connecté.
