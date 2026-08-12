@@ -436,7 +436,7 @@ class JowManager:
                         "instructions": instructions,
                         "entity_id": ai_ent,
                     },
-                    return_response=True,
+                    blocking=True,
                 )
                 query = (response or {}).get("response", {}).get("data", "")
                 query = str(query).strip().strip('"').strip("'")
