@@ -111,8 +111,8 @@ class JowDaySensor(JowBaseSensor):
         super().__init__(manager, entry)
         self._index = index
         self._week_offset = week_offset
-        suffix = f"_s{week_offset}" if week_offset else ""
-        self._attr_name = WEEKDAYS[index].capitalize() + (f" (S+{week_offset})" if week_offset else "")
+        suffix = f"s{week_offset}" if week_offset else ""
+        self._attr_name = WEEKDAYS[index].capitalize() + (f" s{week_offset}" if week_offset else "")
         self._attr_unique_id = f"{entry.entry_id}_{WEEKDAYS[index]}{suffix}"
 
     @property
