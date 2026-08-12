@@ -210,6 +210,10 @@ class JowManager:
 
         def _search():
             params = {"start": "0", "availabilityZoneId": "FR", "query": query, "limit": str(max(limit, 1))}
+            # Preflight OPTIONS (l'API Jow exige un preflight CORS)
+            options_headers = {"accept": "*/*", "accept-language": "fr,fr-FR;q=0.9", "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-jow-withmeta"}
+            requests.options(_JOW_SEARCH_URL, headers=options_headers, params=params, timeout=10)
+            # POST réel
             resp = requests.post(
                 _JOW_SEARCH_URL, headers=dict(_JOW_HEADERS), params=params, data="{}", timeout=15
             )
