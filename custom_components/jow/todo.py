@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.components.todo import (
     TodoItem,
     TodoItemStatus,
@@ -16,6 +18,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN, SIGNAL_UPDATE
 from .manager import JowManager
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -56,7 +60,7 @@ class JowShoppingList(TodoListEntity):
 
     def _update_todo_items(self) -> None:
         """Met à jour _attr_todo_items depuis le manager."""
-        self._attr_todo_items = [
+        items = [
             TodoItem(
                 uid=item["uid"],
                 summary=item["summary"],
@@ -66,6 +70,8 @@ class JowShoppingList(TodoListEntity):
             )
             for item in self._manager.shopping
         ]
+        self._attr_todo_items = items
+        _LOGGER.info("JowShoppingList: %d items loaded", len(items))
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
         await self._manager.async_add_item(item.summary or "")
