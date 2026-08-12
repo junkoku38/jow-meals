@@ -206,11 +206,9 @@ class JowManager:
         """Recherche des recettes sur Jow via l'API HTTP directe."""
 
         def _search():
-            params = dict(_JOW_PARAMS)
-            params["query"] = query
-            params["limit"] = str(max(limit, 1))
+            params = {"start": "0", "availabilityZoneId": "FR", "query": query, "limit": str(max(limit, 1))}
             resp = requests.post(
-                _JOW_SEARCH_URL, headers=_JOW_HEADERS, params=params, data="{}", timeout=15
+                _JOW_SEARCH_URL, headers=dict(_JOW_HEADERS), params=params, data="{}", timeout=15
             )
             resp.raise_for_status()
             data = resp.json().get("data", {})
