@@ -2,28 +2,46 @@
 
 Planifie les repas de la semaine à partir des recettes Jow, agrège les ingrédients
 dans une liste de courses, et affiche pour chaque jour une vignette cliquable
-renvoyant vers la recette sur jow.fr.
+renvoyant vers la recette sur jow.fr. Inclut un service de **suggestion par IA**
+qui adapte les recettes aux allergies, préférences et météo.
 
 > ⚠️ **Avertissement.** Jow ne publie pas d'API officielle. Cette intégration
-> s'appuie sur le paquet communautaire [`jow-api`](https://pypi.org/project/jow-api/)
-> (MIT, non affilié à Jow, dernière version en 2023). Elle n'accède **pas** à
-> votre compte Jow : le planning est construit et stocké dans Home Assistant.
-> L'API interne peut cesser de fonctionner sans préavis, et son usage n'est
-> probablement pas prévu par les CGU de Jow. À utiliser à vos risques.
+> interroge directement `https://api.jow.fr/public/recipe/quicksearch` (endpoint
+> public non documenté). Elle n'accède **pas** à votre compte Jow : le planning
+> est construit et stocké dans Home Assistant. L'API interne peut cesser de
+> fonctionner sans préavis, et son usage n'est probablement pas prévu par les
+> CGU de Jow. À utiliser à vos risques.
 
 ---
 
 ## Installation
 
+### Via HACS (recommandé)
+
+1. **HACS → ⋮ → Dépôts personnalisés**
+2. URL : `https://github.com/junkoku38/ha-jow` · Catégorie : `Integration` → **Ajouter**
+3. **+ Explorer et télécharger des dépôts** → **Jow** → **Télécharger**
+4. Redémarrer Home Assistant
+5. **Paramètres → Appareils et services → + Ajouter une intégration → Jow**
+
+### Manuellement
+
 1. Copier le dossier `custom_components/jow/` dans votre configuration HA
    (à côté de `configuration.yaml`).
 2. Redémarrer Home Assistant.
 3. **Paramètres → Appareils et services → Ajouter une intégration → Jow**.
-4. Indiquer le nombre de couverts par défaut.
 
-Pour une distribution via HACS : publier le dépôt sur GitHub avec un
-`hacs.json` (`{"name": "Jow", "render_readme": true}`), puis l'ajouter en
-*dépôt personnalisé* de catégorie « Integration ».
+## Configuration
+
+Lors de l'ajout (ou via **Paramètres → Appareils et services → Jow → Configurer**) :
+
+| Champ | Rôle | Exemple |
+|---|---|---|
+| Couverts par défaut | Nombre de couverts pour les recettes | `2` |
+| Allergies / interdits | Évités par l'IA lors des suggestions | `fruits à coque, tomates` |
+| Préférences | Prises en compte par l'IA | `méditerranéenne, végétarienne` |
+| Agent IA ai_task | Entité `ai_task.*` pour les suggestions | `ai_task.ollama_ai_task` |
+| Capteur météo | Entité `weather.*` pour contextualiser | `weather.maison` |
 
 ## Entités créées
 
@@ -42,8 +60,9 @@ Pour une distribution via HACS : publier le dépôt sur GitHub avec un
 | `jow.clear_meal` / `jow.clear_week` | Efface un repas / la semaine |
 | `jow.refresh_shopping_list` | Régénère la liste de courses depuis le planning |
 | `jow.search` | Renvoie des recettes (réponse de service, pour un agent LLM) |
+| `jow.suggest` | Suggère des recettes via l'IA (allergies + préférences + météo) |
 
-Exemple :
+### `jow.plan_meal`
 
 ```yaml
 action: jow.plan_meal
@@ -52,6 +71,47 @@ data:
   weekday: mardi
   covers: 4
 ```
+
+### `jow.suggest` — suggestion par IA
+
+Génère une requête de recherche adaptée aux **allergies**, **préférences** et
+**météo** via un agent `ai_task` (Ollama, OpenAI, Gemini…), puis interroge l'API
+Jow et renvoie les recettes correspondantes.
+
+```yaml
+action: jow.suggest
+data:
+  criteria: plat frais pour canicule
+  limit: 3
+  covers: 2
+  weather_entity: weather.maison
+  ai_entity: ai_task.ollama_ai_task
+```
+
+| Champ | Rôle | Requis |
+|---|---|---|
+| `criteria` | Demande libre (ex. « plat frais pour canicule », « dîner léger végétarien ») | Non (si absent, l'IA utilise allergies + préférences seules) |
+| `limit` | Nombre de résultats (1-20) | Non (défaut 5) |
+| `covers` | Nombre de couverts | Non (défaut = config) |
+| `weather_entity` | Capteur météo pour contextualiser | Non (défaut = config) |
+| `ai_entity` | Agent `ai_task.*` | Non (défaut = config) |
+
+**Flux** : `ai_task.generate_data` → requête Jow contextualisée → `jow.search`
+→ recettes avec ingrédients, URL, image.
+
+**Fallback** : si l'IA échoue ou n'est pas configurée, `criteria` est utilisé
+directement comme requête de recherche.
+
+### `jow.search`
+
+```yaml
+action: jow.search
+data:
+  query: salade fraîche
+  limit: 5
+```
+
+Renvoie `{recipes: [...]}` — utile pour un agent conversationnel ou un script.
 
 ## Carte « menu de la semaine » avec vignettes et liens
 
@@ -127,9 +187,76 @@ actions:
 ## Planifier la semaine via un agent conversationnel
 
 Exposez `jow.search` et `jow.plan_meal` à votre agent LLM (Anthropic / OpenAI
-Conversation), et demandez par exemple : « propose-moi cinq dîners équilibrés
-autour de 600 kcal et planifie-les de lundi à vendredi ». L'agent enchaîne les
-recherches puis les appels à `plan_meal`.
+Conversation, ou Ollama via `conversation.*`), et demandez par exemple :
+« propose-moi cinq dîners équilibrés autour de 600 kcal et planifie-les de
+lundi à vendredi ». L'agent enchaîne les recherches puis les appels à
+`plan_meal`.
+
+## Automatisation : suggestions adaptées à la météo
+
+Utilisez `jow.suggest` dans une automatisation pour proposer des plats frais
+en cas de canicule, ou des plats réconfortants en hiver :
+
+```yaml
+alias: Suggestion Jow adaptée météo
+triggers:
+  - trigger: time
+    at: "17:00:00"
+conditions:
+  - condition: numeric_state
+    entity: weather.maison
+    attribute: temperature
+    above: 28
+actions:
+  - action: jow.suggest
+    data:
+      criteria: plat froid et frais pour canicule
+      limit: 3
+      weather_entity: weather.maison
+      ai_entity: ai_task.ollama_ai_task
+    response_variable: jow_suggestions
+  # Optionnel : épingler la première suggestion sur le jour courant
+  - action: jow.plan_meal
+    data:
+      query: "{{ jow_suggestions.recipes[0].name }}"
+      weekday: "{{ now().strftime('%A') | lower }}"
+```
+
+## Carte UI de planification
+
+Créez trois input helpers (**Paramètres → Appareils et services → Entrées**) :
+
+| Type | Nom | Options |
+|---|---|---|
+| Texte | `jow_query` | max 100 caractères |
+| Sélection | `jow_day` | `lundi,mardi,mercredi,jeudi,vendredi,samedi,dimanche` |
+| Nombre | `jow_covers` | min 1, max 12, slider, init 2 |
+
+Carte Lovelace :
+
+```yaml
+type: vertical-stack
+cards:
+  - type: entities
+    title: Planifier un repas
+    entities:
+      - entity: input_text.jow_query
+        name: Recette
+      - entity: input_select.jow_day
+        name: Jour
+      - entity: input_number.jow_covers
+        name: Couverts
+  - type: button
+    name: Planifier
+    icon: mdi:silverware-fork-knife
+    tap_action:
+      action: call-service
+      service: jow.plan_meal
+      service_data:
+        query: "{{ states('input_text.jow_query') }}"
+        weekday: "{{ states('input_select.jow_day') }}"
+        covers: "{{ states('input_number.jow_covers') | int }}"
+```
 
 ## Pistes d'évolution
 
@@ -139,7 +266,9 @@ recherches puis les appels à `plan_meal`.
   stockage et multiplier les capteurs.
 - **Synchronisation Grocy** : appeler `grocy.add_missing_products_to_shopping_list`
   après `refresh_shopping_list` pour tenir compte du stock réel.
-- **Suivi calorique** : le paquet `jow-api` ne renvoie pas les valeurs
-  nutritionnelles ; il faudrait les estimer côté LLM ou croiser les ingrédients
-  avec Open Food Facts, puis pousser le résultat dans l'intégration
-  *Calorie Tracker*.
+- **Suivi calorique** : l'API Jow ne renvoie pas les valeurs nutritionnelles ;
+  il faudrait les estimer côté LLM ou croiser les ingrédients avec Open Food
+  Facts, puis pousser le résultat dans l'intégration *Calorie Tracker*.
+- **Filtre allergènes post-recherche** : après `jow.search`/`jow.suggest`,
+  filtrer les recettes dont les ingrédients contiennent un allergène déclaré,
+  plutôt que de compter sur l'IA pour l'éviter.
