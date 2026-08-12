@@ -48,7 +48,10 @@ class JowShoppingList(TodoListEntity):
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
+        """Appelé quand l'entité est ajoutée à HA."""
+        await super().async_added_to_hass()
         self._update_todo_items()
+        self.async_write_ha_state()
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
         )
@@ -106,7 +109,10 @@ class JowApprovedList(TodoListEntity):
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
+        """Appelé quand l'entité est ajoutée à HA."""
+        await super().async_added_to_hass()
         self._update_todo_items()
+        self.async_write_ha_state()
         self.async_on_remove(
             async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
         )
@@ -118,7 +124,7 @@ class JowApprovedList(TodoListEntity):
 
     def _update_todo_items(self) -> None:
         """Met à jour _attr_todo_items depuis le manager."""
-        self._attr_todo_items = [
+        items = [
             TodoItem(
                 uid=item["uid"],
                 summary=item["summary"],
@@ -128,6 +134,8 @@ class JowApprovedList(TodoListEntity):
             )
             for item in self._manager.approved
         ]
+        self._attr_todo_items = items
+        _LOGGER.info("JowApprovedList: %d items loaded", len(items))
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
         await self._manager.async_add_approved(item.summary or "")
