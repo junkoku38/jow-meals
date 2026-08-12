@@ -53,17 +53,24 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
    (valide **48h**) automatiquement, toutes les **24h**, sans intervention
 4. Quand le refresh token expire, le plugin continue de fonctionner normalement
    avec l'API publique + les derniers allergènes syncés
-5. Pour renouveler le refresh token : cliquez sur le bookmarklet `Jow → HA`
-   depuis jow.fr
+5. Pour renouveler : récupérez un nouveau refresh token sur jow.fr et mettez-le
+   à jour dans la configuration de l'intégration
 
 > ℹ️ Le refresh token est persisté dans la config entry : il survit aux
-> redémarrages de Home Assistant. Une seule connexion via le bookmarklet
-> suffit pour ~6 mois d'autonomie.
+> redémarrages de Home Assistant. Une seule saisie suffit pour ~6 mois
+> d'autonomie.
 
-### Installation du bookmarklet
+### Récupérer le refresh token
 
-Voir [`docs/bookmarklet.md`](docs/bookmarklet.md) pour le bookmarklet qui capture
-automatiquement le token Jow depuis votre navigateur et l'envoie au plugin.
+1. Allez sur [jow.fr](https://jow.fr) et connectez-vous à votre compte
+2. Ouvrez la console développeur (**F12** → onglet **Console**)
+3. Tapez :
+   ```js
+   JSON.parse(localStorage.getItem('jow_store')).data.refreshToken
+   ```
+4. Copiez la chaîne `eyJ...` (c'est votre refresh token)
+5. Dans Home Assistant : **Paramètres → Appareils et services → Jow → Configurer**
+   → collez le refresh token dans le champ dédié
 
 ## Entités créées
 

@@ -73,7 +73,5 @@ JOW_ORDERS_URL = f"{JOW_API_BASE}/orders"
 # discret côté serveur et garder une marge de sécurité.
 JOW_TOKEN_REFRESH_INTERVAL = 24 * 3600
 
-# Google Sign-In (récupéré depuis jow.fr)
-GOOGLE_CLIENT_ID = "908774541818-9tvsq3p6lggasvdnc3iq6i4mckf9e3ru.apps.googleusercontent.com"
 # sync_calories service
 # force re-download

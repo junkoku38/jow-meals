@@ -972,8 +972,9 @@ class JowManager:
             persistent_notification.async_create(
                 self.hass,
                 "Le refresh token Jow a expiré. Les recettes publiques continuent de fonctionner, "
-                "mais les allergènes ne sont plus synchronisés. Reconnectez-vous sur jow.fr "
-                "et cliquez sur le bookmarklet Jow → HA pour renouveler le token.",
+                "mais les allergènes ne sont plus synchronisés. Récupérez un nouveau refresh token "
+                "sur jow.fr (F12 → localStorage → jow_store) et mettez-le à jour dans la "
+                "configuration de l'intégration Jow.",
                 "Jow - Token expiré",
                 "jow_token_expired",
             )
