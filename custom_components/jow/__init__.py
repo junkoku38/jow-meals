@@ -6,6 +6,8 @@ import logging
 from datetime import date, datetime
 
 import voluptuous as vol
+from homeassistant.components.http import HomeAssistantView
+from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
@@ -78,6 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await manager.async_start_token_refresh()
         # Synchroniser allergies et préférences depuis le compte Jow
         await manager.async_sync_preferences_from_jow()
+
+    # Enregistrer le endpoint HTTP pour recevoir le JWT depuis le bookmarklet
+    hass.http.register_view(JowTokenView(manager))
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -262,3 +267,67 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok
+
+
+class JowTokenView(HomeAssistantView):
+    """Endpoint HTTP pour recevoir le JWT Jow depuis le bookmarklet.
+
+    URL: /api/jow/token
+    Méthode: POST
+    Body: {"token": "eyJ..."}
+    """
+
+    url = "/api/jow/token"
+    name = "api:jow:token"
+    requires_auth = True
+
+    def __init__(self, manager: JowManager) -> None:
+        self._manager = manager
+
+    async def post(self, request):
+        """Reçoit le JWT Jow et le stocke dans le manager."""
+        from aiohttp import web
+        import json
+
+        try:
+            body = await request.json()
+            token = body.get("token", "")
+            if not token or not token.startswith("eyJ"):
+                return web.json_response({"error": "Token invalide"}, status=400)
+
+            # Mettre à jour le token dans le manager
+            self._manager.jow_token = token
+            _LOGGER.info("Token Jow reçu via bookmarklet")
+
+            # Rafraîchir immédiatement pour valider
+            ok = await self._manager.async_refresh_jow_token()
+            if not ok:
+                # Le refresh peut échouer si la session provider a expiré,
+                # mais le token lui-même est valide 48h
+                ok = await self._manager.async_check_token_validity()
+
+            if ok:
+                # Synchroniser les préférences
+                await self._manager.async_sync_preferences_from_jow()
+                # Démarrer le rafraîchissement auto
+                await self._manager.async_start_token_refresh()
+                # Notification de succès
+                persistent_notification.async_create(
+                    self._manager.hass,
+                    "Token Jow reçu et validé. Connexion au compte Courses U active.",
+                    "Jow - Connexion réussie",
+                    "jow_token_received",
+                )
+                return web.json_response({"status": "ok", "message": "Token valide"})
+            else:
+                persistent_notification.async_create(
+                    self._manager.hass,
+                    "Token Jow reçu mais invalide. Vérifiez que vous êtes connecté sur jow.fr.",
+                    "Jow - Token invalide",
+                    "jow_token_invalid",
+                )
+                return web.json_response({"error": "Token invalide"}, status=401)
+
+        except Exception as err:
+            _LOGGER.error("Erreur lors de la réception du token Jow : %s", err)
+            return web.json_response({"error": str(err)}, status=500)

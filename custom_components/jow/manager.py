@@ -700,3 +700,13 @@ class JowManager:
     async def _async_refresh_token_callback(self, now=None) -> None:
         """Callback périodique pour rafraîchir le token Jow."""
         await self.async_refresh_jow_token()
+
+    async def async_check_token_validity(self) -> bool:
+        """Vérifie si le token Jow est encore valide."""
+        if not self.jow_token:
+            return False
+        profile = await self.async_get_jow_profile()
+        if profile:
+            return True
+        _LOGGER.warning("Token Jow expiré ou invalide")
+        return False
