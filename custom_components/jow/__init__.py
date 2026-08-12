@@ -231,7 +231,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     vol.Optional(CONF_AI_ENTITY): cv.string,
                 }
             ),
-            supports_response=SupportsResponse.ONLY,
         )
         hass.services.async_register(
             DOMAIN,
