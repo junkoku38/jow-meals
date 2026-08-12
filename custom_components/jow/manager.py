@@ -40,6 +40,7 @@ _MAX_SUMMARY_LEN = 500
 
 # API Jow (non officielle).
 _JOW_SEARCH_URL = "https://api.jow.fr/public/recipe/quicksearch"
+_JOW_RECIPE_URL = "https://api.jow.fr/public/recipe"
 _JOW_STATIC_URL = "https://static.jow.fr/"
 _JOW_HEADERS = {
     "accept": "application/json",
@@ -152,6 +153,7 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
         "preparation_time": recipe.get("preparationTime"),
         "cooking_time": recipe.get("cookingTime"),
         "covers": covers,
+        "calories": recipe.get("_calories"),
         "ingredients": ingredients,
     }
 
@@ -227,6 +229,36 @@ class JowManager:
             _LOGGER.error("Recherche Jow impossible (%s) : %s", query, err)
             return []
 
+    async def async_fetch_calories(self, recipe_id: str) -> int | None:
+        """Récupère les calories par portion depuis l'endpoint détail de Jow.
+
+        L'API de recherche ne retourne pas les calories : il faut interroger
+        l'endpoint /public/recipe/{id} qui expose nutritionalFats.
+        """
+        if not recipe_id or not _ID_RE.match(recipe_id):
+            return None
+
+        def _fetch():
+            url = f"{_JOW_RECIPE_URL}/{recipe_id}"
+            resp = requests.get(url, headers=dict(_JOW_HEADERS), timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            # nutritionalFacts est une liste : [{id: "ENERC", label: "Calories", unit: "kcal", amount: N}, ...]
+            facts = data.get("nutritionalFacts", [])
+            for fact in facts:
+                if fact.get("id") == "ENERC":
+                    try:
+                        return int(round(float(fact.get("amount", 0))))
+                    except (TypeError, ValueError):
+                        return None
+            return None
+
+        try:
+            return await self.hass.async_add_executor_job(_fetch)
+        except Exception as err:
+            _LOGGER.debug("Calories Jow indisponibles pour %s : %s", recipe_id, err)
+            return None
+
     # ------------------------------------------------------------------
     # Planning
     # ------------------------------------------------------------------
@@ -252,6 +284,13 @@ class JowManager:
             return None
 
         recipe = results[min(choice, len(results)) - 1]
+        # Récupérer les calories depuis l'endpoint détail (l'API de recherche
+        # ne les fournit pas).
+        recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
+        if recipe_id:
+            calories = await self.async_fetch_calories(recipe_id)
+            if calories is not None:
+                recipe["_calories"] = calories
         stored = _recipe_to_dict(recipe, covers)
         self.plan[day.isoformat()] = stored
         await self.async_save()

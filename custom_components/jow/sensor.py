@@ -91,6 +91,7 @@ class JowBaseSensor(SensorEntity):
             "preparation_time": meal.get("preparation_time"),
             "cooking_time": meal.get("cooking_time"),
             "covers": meal.get("covers"),
+            "calories": meal.get("calories"),
             "ingredients": meal.get("ingredients", []),
         }
 
