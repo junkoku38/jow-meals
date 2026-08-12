@@ -424,43 +424,95 @@ class JowTokenView(HomeAssistantView):
 
 
 class JowGoogleAuthView(HomeAssistantView):
-    """Démarre le flow OAuth2 Google pour récupérer un credential.
+    """Page HTML qui charge Google Sign-In avec le client_id de Jow.
 
     URL: /api/jow/google_auth
-    Redirige vers Google, puis Google redirige vers /api/jow/google_callback
-    avec le credential (ID token).
+    Affiche un bouton "Se connecter avec Google". Au clic, Google ouvre
+    une popup, l'utilisateur se connecte, et le credential (ID token)
+    est envoyé à /api/jow/google_callback via postMessage (pas de redirect).
     """
 
     url = "/api/jow/google_auth"
     name = "api:jow:google_auth"
-    requires_auth = False  # l'utilisateur clique sur ce lien depuis HA
+    requires_auth = False
 
     async def get(self, request):
         from aiohttp import web
-        from urllib.parse import urlencode
 
-        # L'URL de callback (vers HA)
         ha_url = f"{request.scheme}://{request.host}"
-        callback_url = f"{ha_url}/api/jow/google_callback"
-
-        # Construire l'URL d'autorisation Google
-        params = urlencode({
-            "client_id": GOOGLE_CLIENT_ID,
-            "redirect_uri": callback_url,
-            "response_type": "code",
-            "scope": "openid email profile",
-            "prompt": "consent",
-        })
-        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
-        return web.HTTPFound(auth_url)
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jow → Home Assistant</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+  body {{ font-family: system-ui, sans-serif; display: flex; flex-direction: column;
+         align-items: center; justify-content: center; min-height: 100vh; margin: 0;
+         background: #1a1816; color: #f2efe9; }}
+  h1 {{ font-size: 1.5rem; font-weight: 500; margin-bottom: 0.5rem; }}
+  p {{ color: #a39d93; font-size: 0.9rem; margin-bottom: 2rem; text-align: center; }}
+  #g_idsignin {{ margin-bottom: 1rem; }}
+  #status {{ margin-top: 1rem; font-size: 0.9rem; color: #a39d93; min-height: 1.5em; }}
+  .ok {{ color: #4ade80 !important; }}
+  .err {{ color: #f87171 !important; }}
+</style>
+</head>
+<body>
+  <h1>Connexion Jow</h1>
+  <p>Connectez-vous avec votre compte Google pour lier Jow à Home Assistant.</p>
+  <div id="g_id_onload"
+       data-client_id="{GOOGLE_CLIENT_ID}"
+       data-callback="handleCredential"
+       data-auto_prompt="false">
+  </div>
+  <div id="g_idsignin"
+       class="g_id_signin"
+       data-type="standard"
+       data-size="large"
+       data-theme="outline"
+       data-text="continue_with"
+       data-shape="rectangular"
+       data-locale="fr">
+  </div>
+  <div id="status"></div>
+  <script>
+    function handleCredential(response) {{
+      const status = document.getElementById('status');
+      status.textContent = 'Envoi du token à Home Assistant...';
+      status.className = '';
+      fetch('{ha_url}/api/jow/google_callback', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ credential: response.credential }})
+      }})
+      .then(r => r.json())
+      .then(data => {{
+        if (data.status === 'ok') {{
+          status.textContent = '✅ Connexion réussie ! Token Jow récupéré. Vous pouvez fermer cette page.';
+          status.className = 'ok';
+        }} else {{
+          status.textContent = '❌ Erreur : ' + (data.error || 'inconnue');
+          status.className = 'err';
+        }}
+      }})
+      .catch(err => {{
+        status.textContent = '❌ Erreur réseau : ' + err.message;
+        status.className = 'err';
+      }});
+    }}
+  </script>
+</body>
+</html>"""
+        return web.Response(text=html, content_type="text/html")
 
 
 class JowGoogleCallbackView(HomeAssistantView):
-    """Reçoit le credential Google et l'échange contre un token Jow.
+    """Reçoit le credential Google (ID token) et l'échange contre un token Jow.
 
     URL: /api/jow/google_callback
-    Google redirige ici avec ?code=... qu'on échange contre un ID token,
-    puis on envoie l'ID token à Jow pour obtenir le JWT Jow.
+    Méthode: POST avec { credential: "eyJ..." }
     """
 
     url = "/api/jow/google_callback"
@@ -470,43 +522,31 @@ class JowGoogleCallbackView(HomeAssistantView):
     def __init__(self, managers: dict) -> None:
         self._managers = managers
 
-    async def get(self, request):
+    async def post(self, request):
         from aiohttp import web
         import requests as req
 
-        code = request.query.get("code")
-        if not code:
-            return web.Response(text="Code d'autorisation manquant", status=400)
+        cors_headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+        }
 
-        ha_url = f"{request.scheme}://{request.host}"
-        callback_url = f"{ha_url}/api/jow/google_callback"
+        if request.method == "OPTIONS":
+            return web.Response(status=204, headers=cors_headers)
 
-        # 1. Échanger le code contre un ID token Google
-        token_resp = await request.app["hass"].async_add_executor_job(
-            lambda: req.post(
-                "https://oauth2.googleapis.com/token",
-                data={
-                    "client_id": GOOGLE_CLIENT_ID,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": callback_url,
-                },
-                timeout=15,
-            )
-        )
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response({"error": "Body JSON manquant"}, status=400, headers=cors_headers)
 
-        if token_resp.status_code != 200:
-            _LOGGER.error("Échange code Google échoué : %s", token_resp.text[:200])
-            return web.Response(text="Échange Google échoué", status=400)
-
-        token_data = token_resp.json()
-        id_token = token_data.get("id_token")
+        id_token = body.get("credential")
         if not id_token:
-            return web.Response(text="ID token Google manquant", status=400)
+            return web.json_response({"error": "Credential manquant"}, status=400, headers=cors_headers)
 
-        # 2. Envoyer l'ID token à Jow pour obtenir un JWT Jow
-        jow_resp = await request.app["hass"].async_add_executor_job(
-            lambda: req.post(
+        # Envoyer l'ID token à Jow pour obtenir un JWT Jow
+        def _jow_auth():
+            return req.post(
                 "https://api.jow.fr/public/auth",
                 headers={
                     "accept": "application/json",
@@ -519,26 +559,31 @@ class JowGoogleCallbackView(HomeAssistantView):
                 json={"googleIdToken": id_token},
                 timeout=15,
             )
-        )
+
+        hass = request.app["hass"]
+        try:
+            jow_resp = await hass.async_add_executor_job(_jow_auth)
+        except Exception as err:
+            _LOGGER.error("Auth Jow Google échoué : %s", err)
+            return web.json_response({"error": f"Erreur réseau Jow : {err}"}, status=502, headers=cors_headers)
 
         if jow_resp.status_code != 200:
             _LOGGER.error("Auth Jow Google échoué : %s", jow_resp.text[:200])
-            return web.Response(text="Auth Jow échouée", status=400)
+            return web.json_response({"error": "Auth Jow échouée"}, status=400, headers=cors_headers)
 
         jow_data = jow_resp.json().get("data", {})
         jow_token = jow_data.get("accessToken")
         if not jow_token:
-            return web.Response(text="Token Jow manquant dans la réponse", status=400)
+            return web.json_response({"error": "Token Jow manquant"}, status=400, headers=cors_headers)
 
-        # 3. Stocker le token dans le premier manager disponible
-        hass = request.app["hass"]
+        # Stocker le token dans le premier manager disponible
         manager = None
         for entry_id, mgr in hass.data.get(DOMAIN, {}).items():
             manager = mgr
             break
 
         if not manager:
-            return web.Response(text="Aucune instance Jow configurée", status=400)
+            return web.json_response({"error": "Aucune instance Jow configurée"}, status=400, headers=cors_headers)
 
         manager.jow_token = jow_token
         ok = await manager.async_check_token_validity()
@@ -552,7 +597,7 @@ class JowGoogleCallbackView(HomeAssistantView):
                 "Jow - Connexion Google réussie",
                 "jow_google_auth_success",
             )
-            return web.Response(text="✅ Connexion Google réussie ! Token Jow récupéré. Vous pouvez fermer cette page.", content_type="text/html")
+            return web.json_response({"status": "ok", "message": "Token Jow récupéré"}, headers=cors_headers)
         else:
             persistent_notification.async_create(
                 hass,
@@ -560,4 +605,4 @@ class JowGoogleCallbackView(HomeAssistantView):
                 "Jow - Token invalide",
                 "jow_google_auth_invalid",
             )
-            return web.Response(text="Token Jow invalide", status=400)
+            return web.json_response({"error": "Token Jow invalide"}, status=400, headers=cors_headers)
