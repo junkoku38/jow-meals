@@ -274,6 +274,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ),
             supports_response=SupportsResponse.ONLY,
         )
+
+    # sync_calories est enregistré en dehors du bloc has_service pour
+    # garantir qu'il est disponible même après un reload de l'intégration.
+    if not hass.services.has_service(DOMAIN, SERVICE_SYNC_CALORIES):
         hass.services.async_register(
             DOMAIN,
             SERVICE_SYNC_CALORIES,
