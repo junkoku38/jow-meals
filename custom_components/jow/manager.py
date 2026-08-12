@@ -389,6 +389,58 @@ class JowManager:
         await self.async_save()
 
     # ------------------------------------------------------------------
+    # Marquer un repas comme fait + retirer les ingrédients du stock
+    # ------------------------------------------------------------------
+    async def async_meal_done(self, day: date) -> dict | None:
+        """Marque un repas comme fait et retire les ingrédients de la liste de courses.
+
+        - Supprime le repas du planning
+        - Régénère la liste de courses sans les ingrédients de ce repas
+        - Conserve les items déjà cochés et les items approuvés
+        """
+        meal = self.get_meal(day)
+        if not meal:
+            _LOGGER.warning("Aucun repas planifié pour %s", day.isoformat())
+            return None
+
+        # Ingrédients du repas terminé (noms normalisés)
+        done_ingredients = {
+            self._norm(ing.get("name", ""))
+            for ing in meal.get("ingredients", [])
+            if not ing.get("optional")
+        }
+
+        # Retirer les items de la liste de courses correspondant aux ingrédients
+        # du repas terminé
+        removed = []
+        kept = []
+        for item in self.shopping:
+            if self._norm(item["summary"]) in done_ingredients or any(
+                self._norm(ing) in item["summary"].lower() for ing in done_ingredients
+            ):
+                removed.append(item["summary"])
+            else:
+                kept.append(item)
+        self.shopping = kept
+
+        # Retirer le repas du planning
+        self.plan.pop(day.isoformat(), None)
+        await self.async_save()
+
+        _LOGGER.info(
+            "Repas '%s' marqué comme fait pour %s — %d ingrédients retirés de la liste",
+            meal.get("name", ""),
+            day.isoformat(),
+            len(removed),
+        )
+
+        return {
+            "meal": meal.get("name", ""),
+            "date": day.isoformat(),
+            "removed_from_shopping": removed,
+        }
+
+    # ------------------------------------------------------------------
     # Suggestion IA (ai_task.generate_data + jow.search)
     # ------------------------------------------------------------------
     async def async_suggest(

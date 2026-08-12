@@ -153,3 +153,26 @@ sync_preferences:
   description: >-
     Récupère les habitudes alimentaires et ingrédients exclus depuis le compte
     Jow et les utilise pour filtrer les suggestions de recettes.
+
+meal_done:
+  name: Marquer un repas comme fait
+  description: >-
+    Marque le repas d'un jour comme terminé, retire ses ingrédients de la
+    liste de courses et supprime le repas du planning.
+  fields:
+    weekday:
+      name: Jour de la semaine
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    date:
+      name: Date exacte
+      selector:
+        date: {}
+    week_offset:
+      name: Décalage de semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 4

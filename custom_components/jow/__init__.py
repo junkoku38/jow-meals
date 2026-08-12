@@ -37,6 +37,7 @@ from .const import (
     SERVICE_SUGGEST,
     SERVICE_SYNC_FAVORITES,
     SERVICE_SYNC_PREFERENCES,
+    SERVICE_MEAL_DONE,
     SERVICE_SYNC_PROFILE,
     WEEKDAYS,
 )
@@ -151,6 +152,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "preferences": manager.preferences,
         }
 
+    async def handle_meal_done(call: ServiceCall) -> ServiceResponse:
+        """Marque un repas comme fait et retire les ingrédients de la liste."""
+        day = _resolve_date(manager, call)
+        result = await manager.async_meal_done(day)
+        if result is None:
+            return {"error": "Aucun repas planifié pour cette date"}
+        return result
+
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
             DOMAIN,
@@ -245,6 +254,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema({}),
             supports_response=SupportsResponse.ONLY,
         )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_MEAL_DONE,
+            handle_meal_done,
+            schema=vol.Schema(
+                {
+                    vol.Optional(ATTR_DATE): cv.date,
+                    vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+                    vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+                }
+            ),
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 
@@ -265,6 +287,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SYNC_PROFILE,
                 SERVICE_SYNC_FAVORITES,
                 SERVICE_SYNC_PREFERENCES,
+                SERVICE_MEAL_DONE,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

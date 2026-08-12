@@ -50,10 +50,25 @@ class JowShoppingList(TodoListEntity):
 
     @callback
     def _handle_update(self) -> None:
+        self._update_todo_items()
         self.async_write_ha_state()
+
+    def _update_todo_items(self) -> None:
+        """Met à jour _attr_todo_items depuis le manager."""
+        self._attr_todo_items = [
+            TodoItem(
+                uid=item["uid"],
+                summary=item["summary"],
+                status=TodoItemStatus.COMPLETED
+                if item.get("done")
+                else TodoItemStatus.NEEDS_ACTION,
+            )
+            for item in self._manager.shopping
+        ]
 
     @property
     def todo_items(self) -> list[TodoItem]:
+        """Compat: retourne les items via propriété pour les anciennes versions."""
         return [
             TodoItem(
                 uid=item["uid"],
@@ -104,10 +119,25 @@ class JowApprovedList(TodoListEntity):
 
     @callback
     def _handle_update(self) -> None:
+        self._update_todo_items()
         self.async_write_ha_state()
+
+    def _update_todo_items(self) -> None:
+        """Met à jour _attr_todo_items depuis le manager."""
+        self._attr_todo_items = [
+            TodoItem(
+                uid=item["uid"],
+                summary=item["summary"],
+                status=TodoItemStatus.COMPLETED
+                if item.get("done")
+                else TodoItemStatus.NEEDS_ACTION,
+            )
+            for item in self._manager.approved
+        ]
 
     @property
     def todo_items(self) -> list[TodoItem]:
+        """Compat: retourne les items via propriété pour les anciennes versions."""
         return [
             TodoItem(
                 uid=item["uid"],
