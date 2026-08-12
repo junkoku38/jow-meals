@@ -93,6 +93,8 @@ class JowBaseSensor(SensorEntity):
             "covers": meal.get("covers"),
             "calories": meal.get("calories"),
             "ingredients": meal.get("ingredients", []),
+            "allergens": meal.get("allergens", []),
+            "allergens_source": meal.get("allergens_source"),
         }
 
 

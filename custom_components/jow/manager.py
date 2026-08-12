@@ -105,6 +105,71 @@ def _jow_ingredient_unit(constituent: dict) -> str:
     return ""
 
 
+# Codes allergènes du règlement INCO (UE) 1169/2011, comme la carte JS.
+# 1=gluten, 2=crustacés, 3=œufs, 4=poissons, 5=arachides, 6=soja, 7=lait,
+# 8=fruits à coque, 9=céleri, 10=moutarde, 11=sésame, 12=sulfites,
+# 13=lupin, 14=mollusques.
+#
+# Mapping des « tastes » Jow (catégories d'ingrédients) vers les codes INCO.
+# Les noms Jow sont matchés en minuscules par inclusion.
+_TASTE_TO_INCO: dict[str, int] = {
+    "pâtes": 1, "pate": 1, "pâte": 1,  # gluten
+    "pain": 1, "farine": 1, "blé": 1, "ble": 1, "seigle": 1, "orge": 1,
+    "avoine": 1, "épeautre": 1, "epautre": 1, "couscous": 1, "boulgour": 1,
+    "gnocchi": 1, "pizza": 1, "quiche": 1, "feuille de brick": 1,
+    "crustacé": 2, "crevette": 2, "crabe": 2, "homard": 2, "langoustine": 2,
+    "oeuf": 3, "œuf": 3,
+    "poisson": 4, "saumon": 4, "thon": 4, "cabillaud": 4, "morue": 4,
+    "sardine": 4, "anchois": 4, "merlu": 4, "lieu": 4,
+    "arachide": 5, "cacahuète": 5, "cacahuete": 5,
+    "soja": 6, "tofu": 6, "sauce soja": 6,
+    "lait": 7, "fromage": 7, "crème": 7, "creme": 7, "beurre": 7,
+    "yaourt": 7, "mozzarella": 7, "parmesan": 7, "comté": 7, "comte": 7,
+    "emmental": 7, "gruyère": 7, "gruyere": 7, "feta": 7, "ricotta": 7,
+    "mascarpone": 7, "chèvre": 7, "chevre": 7, "roquefort": 7, "bleu": 7,
+    "fruits à coque": 8, "noix": 8, "amande": 8, "noisette": 8, "cajou": 8,
+    "pistache": 8, "pécan": 8, "pecan": 8, "macadamia": 8,
+    "céleri": 9, "celeri": 9,
+    "moutarde": 10,
+    "sésame": 11, "sesame": 11,
+    "sulfite": 12, "vin": 12, "vinaigre": 12,
+    "lupin": 13,
+    "mollusque": 14, "moule": 14, "huître": 14, "huitre": 14, "coquille": 14,
+}
+
+_INCO_LABELS = {
+    1: "gluten", 2: "crustacés", 3: "œufs", 4: "poissons", 5: "arachides",
+    6: "soja", 7: "lait", 8: "fruits à coque", 9: "céleri", 10: "moutarde",
+    11: "sésame", 12: "sulfites", 13: "lupin", 14: "mollusques",
+}
+
+
+def _deduce_allergens(recipe: Any) -> tuple[list[int], str]:
+    """Déduit les codes allergènes INCO depuis les `tastes` des constituants.
+
+    L'API Jow n'expose pas directement les allergènes INCO, mais chaque
+    constituant porte une liste de `tastes` (catégories d'ingrédients).
+    On mappe ces noms vers les 14 codes du règlement UE 1169/2011.
+
+    Retourne (codes_triés, source) où source vaut "estimated" car la
+    déduction est heuristique (les noms Jow peuvent varier).
+    """
+    codes: set[int] = set()
+    for const in recipe.get("constituents", []) or []:
+        ing = const.get("ingredient", {})
+        # tastes est une liste de dicts avec un champ "name"
+        for taste in ing.get("tastes", []) or []:
+            name = (taste.get("name") or "").lower().strip()
+            if not name:
+                continue
+            # Match par inclusion (ex: "Pâtes" contient "pâtes")
+            for key, code in _TASTE_TO_INCO.items():
+                if key in name or name in key:
+                    codes.add(code)
+                    break
+    return sorted(codes), "estimated"
+
+
 def _recipe_to_dict(recipe: Any, covers: int) -> dict:
     """Convertit une recette Jow (dict JSON de l'API) en dict sérialisable.
 
@@ -148,6 +213,9 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
     if recipe.get("videoUrl"):
         video = _safe_url(f"{_JOW_STATIC_URL}{recipe['videoUrl']}")
 
+    # Allergènes INCO déduits des tastes des constituants (heuristique).
+    allergens, allergens_source = _deduce_allergens(recipe)
+
     return {
         "id": recipe_id,
         "name": _truncate(recipe.get("title", "Recette Jow"), _MAX_NAME_LEN) or "Recette Jow",
@@ -160,6 +228,8 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
         "covers": covers,
         "calories": recipe.get("_calories"),
         "ingredients": ingredients,
+        "allergens": allergens,
+        "allergens_source": allergens_source,
     }
 
 

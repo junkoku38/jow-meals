@@ -11,7 +11,6 @@ from .const import (
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
     CONF_JOW_REFRESH_TOKEN,
-    CONF_JOW_TOKEN,
     CONF_PREFERENCES,
     CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
@@ -42,7 +41,6 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_PREFERENCES: user_input.get(CONF_PREFERENCES, ""),
                     CONF_AI_ENTITY: user_input.get(CONF_AI_ENTITY, ""),
                     CONF_WEATHER_ENTITY: user_input.get(CONF_WEATHER_ENTITY, ""),
-                    CONF_JOW_TOKEN: user_input.get(CONF_JOW_TOKEN, ""),
                     CONF_JOW_REFRESH_TOKEN: user_input.get(CONF_JOW_REFRESH_TOKEN, ""),
                 },
             )
@@ -59,7 +57,6 @@ class JowConfigFlow(ConfigFlow, domain=DOMAIN):
                     vol.Optional(CONF_PREFERENCES, default=""): cv.string,
                     vol.Optional(CONF_AI_ENTITY, default=""): cv.string,
                     vol.Optional(CONF_WEATHER_ENTITY, default=""): cv.string,
-                    vol.Optional(CONF_JOW_TOKEN, default=""): cv.string,
                     vol.Optional(CONF_JOW_REFRESH_TOKEN, default=""): cv.string,
                 }
             ),
@@ -90,7 +87,6 @@ class JowOptionsFlow(OptionsFlow):
                     vol.Optional(CONF_PREFERENCES, default=opts.get(CONF_PREFERENCES, "")): cv.string,
                     vol.Optional(CONF_AI_ENTITY, default=opts.get(CONF_AI_ENTITY, "")): cv.string,
                     vol.Optional(CONF_WEATHER_ENTITY, default=opts.get(CONF_WEATHER_ENTITY, "")): cv.string,
-                    vol.Optional(CONF_JOW_TOKEN, default=opts.get(CONF_JOW_TOKEN, "")): cv.string,
                     vol.Optional(CONF_JOW_REFRESH_TOKEN, default=opts.get(CONF_JOW_REFRESH_TOKEN, "")): cv.string,
                 }
             ),

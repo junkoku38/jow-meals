@@ -86,6 +86,11 @@ def _resolve_date(manager: JowManager, call: ServiceCall) -> date:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Configure l'intégration depuis l'UI."""
     opts = entry.options
+    # L'access token (jow_token) est persisté par le refresh automatique,
+    # mais l'utilisateur ne saisit que le refresh token. On le récupère
+    # depuis les options ; l'access token vient de la config entry (si
+    # un refresh a déjà eu lieu) ou sera généré au démarrage.
+    jow_token = opts.get(CONF_JOW_TOKEN, "") or entry.data.get(CONF_JOW_TOKEN, "")
     manager = JowManager(
         hass,
         opts.get("covers", DEFAULT_COVERS),
@@ -93,11 +98,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         preferences=opts.get(CONF_PREFERENCES, ""),
         ai_entity=opts.get(CONF_AI_ENTITY, ""),
         weather_entity=opts.get(CONF_WEATHER_ENTITY, ""),
-        jow_token=opts.get(CONF_JOW_TOKEN, ""),
+        jow_token=jow_token,
         jow_refresh_token=opts.get(CONF_JOW_REFRESH_TOKEN, ""),
     )
     await manager.async_load()
     manager.purge_old()
+    # Si on a un refresh token mais pas d'access token valide, on en
+    # génère un immédiatement au démarrage.
+    if manager.jow_refresh_token and not manager.is_authenticated:
+        await manager.async_refresh_jow_token()
     # Vérifier le token Jow et synchroniser les préférences si valide
     if manager.is_authenticated:
         if await manager.async_check_token_validity():
