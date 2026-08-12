@@ -21,8 +21,12 @@ async def async_setup_entry(
 ) -> None:
     manager: JowManager = hass.data[DOMAIN][entry.entry_id]
     entities: list[SensorEntity] = [
-        JowDaySensor(manager, entry, index) for index in range(7)
+        JowDaySensor(manager, entry, index, week_offset=0) for index in range(7)
     ]
+    # Capteurs pour la semaine prochaine (S+1), pour la navigation dans la carte.
+    entities.extend(
+        JowDaySensor(manager, entry, index, week_offset=1) for index in range(7)
+    )
     entities.append(JowTodaySensor(manager, entry))
     async_add_entities(entities)
 
@@ -99,19 +103,21 @@ class JowBaseSensor(SensorEntity):
 
 
 class JowDaySensor(JowBaseSensor):
-    """Repas planifié pour un jour donné de la semaine en cours."""
+    """Repas planifié pour un jour donné d'une semaine (courante ou suivante)."""
 
     _attr_icon = "mdi:silverware-fork-knife"
 
-    def __init__(self, manager: JowManager, entry: ConfigEntry, index: int) -> None:
+    def __init__(self, manager: JowManager, entry: ConfigEntry, index: int, week_offset: int = 0) -> None:
         super().__init__(manager, entry)
         self._index = index
-        self._attr_name = WEEKDAYS[index].capitalize()
-        self._attr_unique_id = f"{entry.entry_id}_{WEEKDAYS[index]}"
+        self._week_offset = week_offset
+        suffix = f"_s{week_offset}" if week_offset else ""
+        self._attr_name = WEEKDAYS[index].capitalize() + (f" (S+{week_offset})" if week_offset else "")
+        self._attr_unique_id = f"{entry.entry_id}_{WEEKDAYS[index]}{suffix}"
 
     @property
     def _date(self) -> date:
-        return self._manager.week_dates()[self._index]
+        return self._manager.week_dates(self._week_offset)[self._index]
 
     @property
     def _meal(self) -> dict | None:
