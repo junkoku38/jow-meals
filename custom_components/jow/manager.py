@@ -124,8 +124,7 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
         )
 
     recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
-    slug = recipe.get("slug")
-    url = f"{RECIPE_BASE_URL}{slug}" if slug else (f"{RECIPE_BASE_URL}{recipe_id}" if recipe_id else None)
+    url = f"{RECIPE_BASE_URL}{recipe_id}" if recipe_id else None
     image = None
     if recipe.get("imageUrl"):
         image = _safe_url(f"{_JOW_STATIC_URL}{recipe['imageUrl']}")
