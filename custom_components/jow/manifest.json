@@ -1,12 +1,13 @@
 {
   "domain": "jow",
   "name": "Jow",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "documentation": "https://github.com/junkoku38/ha-jow",
   "issue_tracker": "https://github.com/junkoku38/ha-jow/issues",
   "codeowners": ["@junkoku38"],
   "config_flow": true,
   "iot_class": "cloud_polling",
   "integration_type": "service",
+  "icon": "icon.png",
   "requirements": []
 }
