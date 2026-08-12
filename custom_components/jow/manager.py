@@ -46,6 +46,9 @@ _JOW_HEADERS = {
     "accept-language": "fr",
     "content-type": "application/json",
     "x-jow-withmeta": "1",
+    "origin": "https://jow.fr",
+    "referer": "https://jow.fr/",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
 _JOW_PARAMS = {"start": "0", "availabilityZoneId": "FR"}
 _ALLOWED_URL_SCHEMES = {"http", "https"}
