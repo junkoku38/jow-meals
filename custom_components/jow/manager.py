@@ -431,23 +431,29 @@ class JowManager:
                 response = await self.hass.services.async_call(
                     "ai_task",
                     "generate_data",
-                    service_data={
+                    {
                         "task_name": "jow_recipe_suggest",
                         "instructions": instructions,
                         "entity_id": ai_ent,
                     },
-                    return_response=True,
                     blocking=True,
+                    return_response=True,
                 )
-                # Format: {"conversation_id": ..., "data": "..."} ou dict par entité
+                # Selon la version HA, response peut être:
+                # {"conversation_id": ..., "data": "..."}  (via WS)
+                # ou {"ai_task.xxx": {"data": "..."}}  (via async_call interne)
                 if isinstance(response, dict):
-                    data = response.get("data") or response.get("response", {}).get("data", "")
+                    data = response.get("data")
+                    if not data:
+                        data = response.get("response", {}).get("data", "")
                     if not data:
                         for _k, val in response.items():
                             if isinstance(val, dict) and "data" in val:
                                 data = val["data"]
                                 break
                     query = str(data or "").strip().strip('"').strip("'")
+                elif isinstance(response, str):
+                    query = response.strip().strip('"').strip("'")
             except Exception as err:
                 _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
                 query = ""
