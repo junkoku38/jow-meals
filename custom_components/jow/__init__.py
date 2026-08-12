@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime
 
@@ -532,14 +533,15 @@ class JowGoogleCallbackView(HomeAssistantView):
             return req.post(
                 "https://api.jow.fr/public/auth",
                 headers={
-                    "accept": "application/json",
-                    "content-type": "application/json",
+                    "accept": "application/json, text/plain, */*",
+                    "content-type": "text/plain;charset=UTF-8",
                     "origin": "https://jow.fr",
                     "referer": "https://jow.fr/",
                     "x-jow-withmeta": "true",
+                    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 },
                 params={"createIfNotExist": "true"},
-                json={"googleIdToken": id_token},
+                data=json.dumps({"googleIdToken": id_token}),
                 timeout=15,
             )
 
@@ -551,8 +553,8 @@ class JowGoogleCallbackView(HomeAssistantView):
             return web.json_response({"error": f"Erreur réseau Jow : {err}"}, status=502)
 
         if jow_resp.status_code != 200:
-            _LOGGER.error("Auth Jow Google échoué : %s", jow_resp.text[:200])
-            return web.json_response({"error": "Auth Jow échouée"}, status=400)
+            _LOGGER.error("Auth Jow Google échoué (status %s) : %s", jow_resp.status_code, jow_resp.text[:500])
+            return web.json_response({"error": f"Auth Jow échouée : {jow_resp.text[:200]}"}, status=400)
 
         jow_data = jow_resp.json().get("data", {})
         jow_token = jow_data.get("accessToken")
