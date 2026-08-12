@@ -147,3 +147,9 @@ sync_profile:
 sync_favorites:
   name: Synchroniser les favoris Jow
   description: Récupère les recettes favorites du compte Jow connecté.
+
+sync_preferences:
+  name: Synchroniser les préférences Jow
+  description: >-
+    Récupère les habitudes alimentaires et ingrédients exclus depuis le compte
+    Jow et les utilise pour filtrer les suggestions de recettes.

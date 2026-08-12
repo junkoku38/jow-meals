@@ -473,7 +473,29 @@ class JowManager:
         _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
         results = await self.async_search(query, limit=max(limit, 1))
         covers = covers or self.default_covers
-        return [_recipe_to_dict(r, covers) for r in results]
+        recipes = [_recipe_to_dict(r, covers) for r in results]
+
+        # Filtrer les recettes contenant des ingrédients exclus du compte Jow
+        if self.jow_token:
+            excluded = await self.async_get_excluded_ingredients()
+            if excluded:
+                excluded_lower = {e.lower().strip() for e in excluded}
+                filtered = []
+                for recipe in recipes:
+                    ings = [i.get("name", "").lower() for i in recipe.get("ingredients", [])]
+                    if not any(
+                        any(excl in ing for ing in ings) for excl in excluded_lower
+                    ):
+                        filtered.append(recipe)
+                if filtered:
+                    recipes = filtered
+                    _LOGGER.info(
+                        "Recettes filtrées (%d exclues pour %d restantes)",
+                        len(results) - len(recipes),
+                        len(recipes),
+                    )
+
+        return recipes
 
     # ------------------------------------------------------------------
     # Connexion au compte Jow (token JWT + rafraîchissement automatique)
@@ -541,6 +563,51 @@ class JowManager:
         except Exception as err:
             _LOGGER.warning("Récupération profil Jow échouée : %s", err)
             return None
+
+    async def async_sync_preferences_from_jow(self) -> None:
+        """Synchronise allergies et préférences depuis le compte Jow.
+
+        Remplace les champs manuels par les données du profil Jow :
+        - eatingHabits → préférences (végétarien, sans gluten, etc.)
+        - excludedIngredientTastes → allergies/interdits (ingrédients exclus)
+        """
+        profile = await self.async_get_jow_profile()
+        if not profile:
+            return
+
+        # Eating habits → preferences
+        habits = profile.get("eatingHabits", {})
+        pref_labels = []
+        habit_map = {
+            "vegetarian": "végétarien",
+            "vegan": "végétalien",
+            "pescatarian": "pescétarien",
+            "glutenFree": "sans gluten",
+            "dairyFree": "sans lactose",
+            "porkless": "sans porc",
+        }
+        for key, label in habit_map.items():
+            if habits.get(key):
+                pref_labels.append(label)
+        if pref_labels:
+            self.preferences = ", ".join(pref_labels)
+            _LOGGER.info("Préférences synchronisées depuis Jow : %s", self.preferences)
+
+        # Excluded ingredients → allergies/interdits
+        excluded = profile.get("excludedIngredientTastes", [])
+        if excluded:
+            allergy_names = [e.get("name", "") for e in excluded if e.get("name")]
+            if allergy_names:
+                self.allergies = ", ".join(allergy_names)
+                _LOGGER.info("Allergies synchronisées depuis Jow : %s", self.allergies)
+
+    async def async_get_excluded_ingredients(self) -> list[str]:
+        """Retourne la liste des ingrédients exclus du compte Jow."""
+        profile = await self.async_get_jow_profile()
+        if not profile:
+            return []
+        excluded = profile.get("excludedIngredientTastes", [])
+        return [e.get("name", "") for e in excluded if e.get("name")]
 
     async def async_get_jow_favorites(self) -> list[dict]:
         """Récupère les recettes favorites du compte Jow."""

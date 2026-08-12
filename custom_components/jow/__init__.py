@@ -34,6 +34,7 @@ from .const import (
     SERVICE_SEARCH,
     SERVICE_SUGGEST,
     SERVICE_SYNC_FAVORITES,
+    SERVICE_SYNC_PREFERENCES,
     SERVICE_SYNC_PROFILE,
     WEEKDAYS,
 )
@@ -75,6 +76,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Démarrer le rafraîchissement automatique du token Jow si configuré
     if manager.is_authenticated:
         await manager.async_start_token_refresh()
+        # Synchroniser allergies et préférences depuis le compte Jow
+        await manager.async_sync_preferences_from_jow()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -133,6 +136,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Récupère les recettes favorites du compte Jow."""
         favorites = await manager.async_get_jow_favorites()
         return {"recipes": favorites}
+
+    async def handle_sync_preferences(call: ServiceCall) -> ServiceResponse:
+        """Synchronise allergies et préférences depuis le compte Jow."""
+        await manager.async_sync_preferences_from_jow()
+        return {
+            "allergies": manager.allergies,
+            "preferences": manager.preferences,
+        }
 
     if not hass.services.has_service(DOMAIN, SERVICE_PLAN_MEAL):
         hass.services.async_register(
@@ -221,6 +232,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             schema=vol.Schema({}),
             supports_response=SupportsResponse.ONLY,
         )
+        hass.services.async_register(
+            DOMAIN,
+            SERVICE_SYNC_PREFERENCES,
+            handle_sync_preferences,
+            schema=vol.Schema({}),
+            supports_response=SupportsResponse.ONLY,
+        )
 
     return True
 
@@ -240,6 +258,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SUGGEST,
                 SERVICE_SYNC_PROFILE,
                 SERVICE_SYNC_FAVORITES,
+                SERVICE_SYNC_PREFERENCES,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok
