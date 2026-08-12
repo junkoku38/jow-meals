@@ -170,6 +170,7 @@ class JowManager:
         ai_entity: str = "",
         weather_entity: str = "",
         jow_token: str = "",
+        jow_refresh_token: str = "",
     ) -> None:
         self.hass = hass
         self.default_covers = default_covers
@@ -178,6 +179,7 @@ class JowManager:
         self.ai_entity = ai_entity
         self.weather_entity = weather_entity
         self.jow_token = jow_token
+        self.jow_refresh_token = jow_refresh_token or jow_token  # fallback
         self._token_refresh_cancel: Any = None
         self._store: Store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         # {"2026-08-10": {recette...}}
@@ -680,31 +682,45 @@ class JowManager:
         return bool(self.jow_token)
 
     async def async_refresh_jow_token(self) -> bool:
-        """Rafraîchit le token JWT Jow via POST /auth?createIfNotExist=false.
+        """Rafraîchit l'access token JWT Jow via le refresh token.
 
-        Le token est valide 48h ; on le rafraîchit toutes les 40h.
+        Jow utilise un refresh token (valide ~1 an) pour générer un access
+        token (valide 48h). On envoie le refresh token comme Bearer à
+        POST /auth?createIfNotExist=false et on récupère le nouvel accessToken.
         """
-        if not self.jow_token:
+        if not self.jow_refresh_token:
             return False
 
         def _refresh():
-            headers = self._jow_auth_headers()
+            headers = {
+                "accept": "application/json, text/plain, */*",
+                "content-type": "text/plain;charset=UTF-8",
+                "origin": "https://jow.fr",
+                "referer": "https://jow.fr/",
+                "x-jow-withmeta": "true",
+                "authorization": f"Bearer {self.jow_refresh_token}",
+                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            }
             resp = requests.post(
                 JOW_AUTH_URL,
                 headers=headers,
                 params={"createIfNotExist": "false"},
-                json={"provider": "coursesu"},
+                data="{}",
                 timeout=15,
             )
             resp.raise_for_status()
             data = resp.json().get("data", {})
-            return data.get("accessToken")
+            return data.get("accessToken"), data.get("refreshToken")
 
         try:
-            new_token = await self.hass.async_add_executor_job(_refresh)
-            if new_token:
-                self.jow_token = new_token
-                _LOGGER.info("Token Jow rafraîchi avec succès")
+            result = await self.hass.async_add_executor_job(_refresh)
+            if result:
+                new_access, new_refresh = result
+                if new_access:
+                    self.jow_token = new_access
+                if new_refresh:
+                    self.jow_refresh_token = new_refresh
+                _LOGGER.info("Token Jow rafraîchi avec succès (via refresh token)")
                 return True
         except Exception as err:
             _LOGGER.warning("Rafraîchissement token Jow échoué : %s", err)

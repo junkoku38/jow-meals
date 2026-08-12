@@ -56,6 +56,7 @@ CONF_PREFERENCES = "preferences"
 CONF_AI_ENTITY = "ai_entity"
 CONF_WEATHER_ENTITY = "weather_entity"
 CONF_JOW_TOKEN = "jow_token"
+CONF_JOW_REFRESH_TOKEN = "jow_refresh_token"
 
 # API Jow auth
 JOW_API_BASE = "https://api.jow.fr/public"

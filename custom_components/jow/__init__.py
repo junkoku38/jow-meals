@@ -387,12 +387,33 @@ class JowTokenView(HomeAssistantView):
         try:
             body = await request.json()
             token = body.get("token", "")
+            refresh = body.get("refresh_token", "") or body.get("refreshToken", "")
             if not token or not token.startswith("eyJ"):
                 return web.json_response({"error": "Token invalide"}, status=400, headers=cors_headers)
 
             # Mettre à jour le token dans le manager
             self._manager.jow_token = token
-            _LOGGER.info("Token Jow reçu via bookmarklet")
+            if refresh:
+                self._manager.jow_refresh_token = refresh
+                _LOGGER.info("Token Jow + refresh token reçus via bookmarklet")
+            else:
+                # Le token reçu est peut-être un refresh token (type=refresh)
+                # au lieu d'un access token (type=access)
+                _LOGGER.info("Token Jow reçu via bookmarklet")
+                # Si c'est un refresh token, l'utiliser comme tel et générer un access token
+                import base64
+                try:
+                    payload = token.split(".")[1]
+                    payload += "=" * (4 - len(payload) % 4)
+                    claims = json.loads(base64.b64decode(payload))
+                    if claims.get("type") == "refresh":
+                        self._manager.jow_refresh_token = token
+                        _LOGGER.info("Refresh token détecté, génération d'un access token...")
+                        ok = await self._manager.async_refresh_jow_token()
+                        if ok:
+                            _LOGGER.info("Access token généré avec succès depuis le refresh token")
+                except Exception:
+                    pass
 
             # Vérifier la validité du token
             ok = await self._manager.async_check_token_validity()
