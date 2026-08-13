@@ -335,6 +335,8 @@ class JowManager:
         # Liste approuvée d'articles à fusionner systématiquement avec
         # la liste de courses générée depuis le planning.
         self.approved: list[dict] = []
+        # Favoris Jow (mis en cache par sync_favorites)
+        self.favorites: list[dict] = []
 
     # ------------------------------------------------------------------
     # Persistance
