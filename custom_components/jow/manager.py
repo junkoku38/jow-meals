@@ -460,6 +460,39 @@ class JowManager:
         await self.async_save()
         return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
 
+    async def async_set_covers(self, day: date, covers: int) -> dict | None:
+        """Change le nombre de couverts d'un repas planifié.
+        Recalcule les quantités d'ingrédients proportionnellement."""
+        meal = self.get_meal(day)
+        if not meal:
+            return None
+        meal["covers"] = covers
+        # Recalculer les quantités d'ingrédients
+        base_covers = meal.get("_base_covers") or 1
+        ratio = covers / base_covers
+        for ing in meal.get("ingredients", []):
+            qty = ing.get("_base_quantity") or ing.get("quantity")
+            if qty and isinstance(qty, (int, float)):
+                ing["quantity"] = round(qty * ratio, 2)
+        await self.async_save()
+        return {"covers": covers, "day": day.isoformat()}
+
+    async def async_exclude_ingredient(self, ingredient: str) -> dict:
+        """Retire un ingrédient de la liste de courses (déjà en stock)."""
+        norm = self._norm(ingredient)
+        removed = []
+        kept = []
+        for item in self.shopping:
+            item_norm = self._norm(item["summary"])
+            item_name = item_norm.split(" de ", 1)[1] if " de " in item_norm else item_norm
+            if norm in item_name or norm in item_norm:
+                removed.append(item["summary"])
+            else:
+                kept.append(item)
+        self.shopping = kept
+        await self.async_save()
+        return {"removed": removed, "count": len(removed)}
+
     async def async_sync_calories(self, week_offset: int = 0) -> int:
         """Récupère les calories manquantes pour tous les repas planifiés.
 

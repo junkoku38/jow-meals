@@ -26,6 +26,7 @@ from .const import (
     ATTR_TO_DATE,
     ATTR_TO_WEEKDAY,
     ATTR_TO_WEEK_OFFSET,
+    ATTR_INGREDIENT,
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
     CONF_JOW_REFRESH_TOKEN,
@@ -46,6 +47,9 @@ from .const import (
     SERVICE_SYNC_PROFILE,
     SERVICE_SYNC_CALORIES,
     SERVICE_SEND_MENU,
+    SERVICE_COPY_MEAL,
+    SERVICE_SET_COVERS,
+    SERVICE_EXCLUDE_INGREDIENT,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -227,6 +231,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return {"error": "Aucun repas planifié sur la date source"}
         return result
 
+    async def handle_set_covers(call: ServiceCall) -> ServiceResponse:
+        """Change le nombre de couverts d'un repas planifié."""
+        mgr = _get_manager(hass, call, manager)
+        day = _resolve_date(mgr, call)
+        covers = call.data.get(ATTR_COVERS, 2)
+        result = await mgr.async_set_covers(day, covers)
+        if result is None:
+            return {"error": "Aucun repas planifié pour cette date"}
+        return result
+
+    async def handle_exclude_ingredient(call: ServiceCall) -> ServiceResponse:
+        """Retire un ingrédient de la liste de courses (déjà en stock)."""
+        mgr = _get_manager(hass, call, manager)
+        ingredient = call.data.get(ATTR_INGREDIENT, "")
+        if not ingredient:
+            return {"error": "Aucun ingrédient spécifié"}
+        result = await mgr.async_exclude_ingredient(ingredient)
+        return result
+
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
         mgr = _get_manager(hass, call, manager)
@@ -340,6 +363,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_SET_COVERS, handle_set_covers,
+        schema=vol.Schema({
+            vol.Optional(ATTR_DATE): cv.date,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Required(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXCLUDE_INGREDIENT, handle_exclude_ingredient,
+        schema=vol.Schema({
+            vol.Required(ATTR_INGREDIENT): cv.string,
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
         schema=vol.Schema({
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
@@ -380,8 +422,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SYNC_PREFERENCES,
                 SERVICE_MEAL_DONE,
                 SERVICE_SYNC_CALORIES,
-    SERVICE_SEND_MENU,
-    SERVICE_COPY_MEAL,
+                SERVICE_SEND_MENU,
+                SERVICE_COPY_MEAL,
+                SERVICE_SET_COVERS,
+                SERVICE_EXCLUDE_INGREDIENT,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

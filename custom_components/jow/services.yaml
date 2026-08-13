@@ -281,3 +281,53 @@ copy_meal:
         number:
           min: -4
           max: 8
+
+set_covers:
+  name: Changer les couverts
+  description: >-
+    Change le nombre de couverts d'un repas planifié et recalcule les quantités
+    d'ingrédients proportionnellement.
+  fields:
+    date:
+      name: Date
+      selector:
+        date:
+    weekday:
+      name: Jour de la semaine
+      selector:
+        select:
+          options:
+            - lundi
+            - mardi
+            - mercredi
+            - jeudi
+            - vendredi
+            - samedi
+            - dimanche
+    week_offset:
+      name: Décalage semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    covers:
+      name: Nombre de couverts
+      required: true
+      default: 2
+      selector:
+        number:
+          min: 1
+          max: 20
+
+exclude_ingredient:
+  name: Retirer un ingrédient (en stock)
+  description: >-
+    Retire un ingrédient de la liste de courses (déjà en stock dans le frigo).
+  fields:
+    ingredient:
+      name: Ingrédient
+      description: Nom de l'ingrédient à retirer (ex : "riz", "tomate").
+      required: true
+      selector:
+        text:
