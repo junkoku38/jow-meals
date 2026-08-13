@@ -468,14 +468,25 @@ class JowManager:
         meal = self.get_meal(day)
         if not meal:
             return None
-        meal["covers"] = covers
-        # Recalculer les quantités d'ingrédients
-        base_covers = meal.get("_base_covers") or 1
+        # Sauvegarder les quantités originales au premier changement
+        if "_base_covers" not in meal:
+            meal["_base_covers"] = meal.get("covers") or self.default_covers
+            for ing in meal.get("ingredients", []):
+                ing["_base_quantity"] = ing.get("quantity")
+        base_covers = meal["_base_covers"] or 1
+        old_covers = meal.get("covers") or base_covers
+        # Eviter division par zero
+        if old_covers == 0:
+            old_covers = 1
         ratio = covers / base_covers
+        meal["covers"] = covers
         for ing in meal.get("ingredients", []):
-            qty = ing.get("_base_quantity") or ing.get("quantity")
-            if qty and isinstance(qty, (int, float)):
-                ing["quantity"] = round(qty * ratio, 2)
+            base_qty = ing.get("_base_quantity")
+            if base_qty is not None:
+                try:
+                    ing["quantity"] = round(float(base_qty) * ratio, 2)
+                except (TypeError, ValueError):
+                    pass
         await self.async_save()
         return {"covers": covers, "day": day.isoformat()}
 
