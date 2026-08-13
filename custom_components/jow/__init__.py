@@ -329,15 +329,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_PROFILE, handle_sync_profile,
-        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+        schema=vol.Schema({}, extra=vol.ALLOW_EXTRA), supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_FAVORITES, handle_sync_favorites,
-        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+        schema=vol.Schema({}, extra=vol.ALLOW_EXTRA), supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_PREFERENCES, handle_sync_preferences,
-        schema=vol.Schema({}), supports_response=SupportsResponse.ONLY,
+        schema=vol.Schema({}, extra=vol.ALLOW_EXTRA), supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_MEAL_DONE, handle_meal_done,
