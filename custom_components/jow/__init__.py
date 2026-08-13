@@ -50,6 +50,7 @@ from .const import (
     SERVICE_COPY_MEAL,
     SERVICE_SET_COVERS,
     SERVICE_EXCLUDE_INGREDIENT,
+    SERVICE_GET_CONTEXT,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -256,6 +257,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         result = await mgr.async_exclude_ingredient(ingredient)
         return result
 
+    async def handle_get_context(call: ServiceCall) -> ServiceResponse:
+        """Retourne le contexte IA complet (allergies, préférences, plats récents)."""
+        mgr = _get_manager(hass, call, manager)
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(weeks=4)).isoformat()
+        recent = []
+        for day_iso, meal in mgr.plan.items():
+            if meal and meal.get("name") and day_iso >= cutoff:
+                recent.append({"name": meal["name"], "date": day_iso})
+        # Ingrédients exclus du compte Jow
+        excluded = []
+        if mgr.jow_token:
+            excluded = await mgr.async_get_excluded_ingredients()
+        return {
+            "allergies": mgr.allergies or "",
+            "preferences": mgr.preferences or "",
+            "excluded_ingredients": excluded,
+            "recent_meals": recent,
+            "jow_connected": bool(mgr.jow_token),
+            "default_covers": mgr.default_covers,
+        }
+
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
         mgr = _get_manager(hass, call, manager)
@@ -385,6 +408,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }),
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_GET_CONTEXT, handle_get_context,
+        schema=vol.Schema({}, extra=vol.ALLOW_EXTRA),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
         schema=vol.Schema({
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
@@ -429,6 +457,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,
+                SERVICE_GET_CONTEXT,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok
