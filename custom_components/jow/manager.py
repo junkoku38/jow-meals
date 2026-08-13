@@ -339,6 +339,12 @@ class JowManager:
         self.approved: list[dict] = []
         # Favoris Jow (mis en cache par sync_favorites)
         self.favorites: list[dict] = []
+        # Ingrédients à éviter (préférence, pas allergie) — modifiable via la carte
+        self.avoid_ingredients: list[str] = []
+        # Ingrédients interdits (allergie) — modifiable via la carte
+        # Synchronisé avec Jow au démarrage, mais l'utilisateur peut en
+        # ajouter/retirer manuellement.
+        self.banned_ingredients: list[str] = []
 
     # ------------------------------------------------------------------
     # Persistance
@@ -503,16 +509,39 @@ class JowManager:
         return {"removed": removed, "count": len(removed)}
 
     async def async_clear_recent(self, date_iso: str) -> dict:
-        """Retire un plat de l'historique d'anti-répétition.
-        Soit on supprime le repas de cette date, soit on garde le repas
-        mais on marque son ID comme 'non exclu' pour les futures suggestions."""
+        """Retire un plat de l'historique d'anti-répétition."""
         meal = self.plan.get(date_iso)
         if not meal:
             return {"error": "Aucun repas à cette date"}
-        # Marquer le repas comme non-exclu pour les futures suggestions
         meal["_no_exclude"] = True
         await self.async_save()
         return {"cleared": meal.get("name", ""), "date": date_iso}
+
+    def add_avoid_ingredient(self, ingredient: str) -> dict:
+        """Ajoute un ingrédient à éviter (préférence, pas allergie)."""
+        ing = ingredient.strip().lower()
+        if ing and ing not in self.avoid_ingredients:
+            self.avoid_ingredients.append(ing)
+        return {"avoid_ingredients": self.avoid_ingredients}
+
+    def remove_avoid_ingredient(self, ingredient: str) -> dict:
+        """Retire un ingrédient à éviter."""
+        ing = ingredient.strip().lower()
+        self.avoid_ingredients = [e for e in self.avoid_ingredients if e != ing]
+        return {"avoid_ingredients": self.avoid_ingredients}
+
+    def add_banned_ingredient(self, ingredient: str) -> dict:
+        """Ajoute un ingrédient interdit (allergie)."""
+        ing = ingredient.strip().lower()
+        if ing and ing not in self.banned_ingredients:
+            self.banned_ingredients.append(ing)
+        return {"banned_ingredients": self.banned_ingredients}
+
+    def remove_banned_ingredient(self, ingredient: str) -> dict:
+        """Retire un ingrédient interdit."""
+        ing = ingredient.strip().lower()
+        self.banned_ingredients = [e for e in self.banned_ingredients if e != ing]
+        return {"banned_ingredients": self.banned_ingredients}
 
     async def async_sync_calories(self, week_offset: int = 0) -> int:
         """Récupère les calories manquantes pour tous les repas planifiés.
@@ -769,6 +798,10 @@ class JowManager:
             constraints += f"Allergies/interdits : {self.allergies}. "
         if self.preferences:
             constraints += f"Préférences : {self.preferences}. "
+        if self.banned_ingredients:
+            constraints += f"Ingrédients interdits : {', '.join(self.banned_ingredients)}. "
+        if self.avoid_ingredients:
+            constraints += f"Ingrédients à éviter si possible : {', '.join(self.avoid_ingredients)}. "
         if criteria:
             constraints += f"Demande : {criteria}. "
 
@@ -862,25 +895,35 @@ class JowManager:
         # Garder le nombre demandé
         recipes = recipes[:limit]
 
-        # Filtrer les recettes contenant des ingrédients exclus du compte Jow
+        # Filtrer les recettes contenant des ingrédients interdits
+        # (allergies Jow + liste manuelle banned_ingredients)
+        banned = set()
         if self.jow_token:
             excluded = await self.async_get_excluded_ingredients()
-            if excluded:
-                excluded_lower = {e.lower().strip() for e in excluded}
-                filtered = []
-                for recipe in recipes:
-                    ings = [i.get("name", "").lower() for i in recipe.get("ingredients", [])]
-                    if not any(
-                        any(excl in ing for ing in ings) for excl in excluded_lower
-                    ):
-                        filtered.append(recipe)
-                if filtered:
-                    recipes = filtered
-                    _LOGGER.info(
-                        "Recettes filtrées (%d exclues pour %d restantes)",
-                        len(results) - len(recipes),
-                        len(recipes),
-                    )
+            banned.update(e.lower().strip() for e in excluded if e)
+        banned.update(e.lower().strip() for e in self.banned_ingredients if e)
+        if banned:
+            filtered = []
+            for recipe in recipes:
+                ings = [i.get("name", "").lower() for i in recipe.get("ingredients", [])]
+                if not any(any(b in ing for ing in ings) for b in banned):
+                    filtered.append(recipe)
+            if filtered and len(filtered) < len(recipes):
+                recipes = filtered
+                _LOGGER.info("Recettes filtrées (interdits) : %d restantes", len(recipes))
+
+        # Filtrer les recettes contenant des ingrédients à éviter (préférence)
+        if self.avoid_ingredients:
+            avoid = {e.lower().strip() for e in self.avoid_ingredients if e}
+            filtered = []
+            for recipe in recipes:
+                ings = [i.get("name", "").lower() for i in recipe.get("ingredients", [])]
+                if not any(any(a in ing for ing in ings) for a in avoid):
+                    filtered.append(recipe)
+            # Ne pas filtrer si ça vide tous les résultats
+            if filtered and len(filtered) < len(recipes):
+                recipes = filtered
+                _LOGGER.info("Recettes filtrées (à éviter) : %d restantes", len(recipes))
 
         # Si un jour de la semaine est fourni, planifier le premier résultat
         if weekday and weekday in WEEKDAYS and recipes:

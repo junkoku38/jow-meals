@@ -52,6 +52,8 @@ from .const import (
     SERVICE_EXCLUDE_INGREDIENT,
     SERVICE_GET_CONTEXT,
     SERVICE_CLEAR_RECENT,
+    SERVICE_ADD_AVOID,
+    SERVICE_ADD_BANNED,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -278,6 +280,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "allergies": mgr.allergies or "",
             "preferences": mgr.preferences or "",
             "excluded_ingredients": excluded,
+            "banned_ingredients": mgr.banned_ingredients,
+            "avoid_ingredients": mgr.avoid_ingredients,
             "recent_meals": recent,
             "jow_connected": bool(mgr.jow_token),
             "default_covers": mgr.default_covers,
@@ -289,6 +293,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         date_iso = call.data.get("date", "")
         result = await mgr.async_clear_recent(date_iso)
         return result
+
+    async def handle_add_avoid(call: ServiceCall) -> ServiceResponse:
+        """Ajoute ou retire un ingrédient à éviter (préférence)."""
+        mgr = _get_manager(hass, call, manager)
+        ingredient = call.data.get("ingredient", "")
+        action = call.data.get("action", "add")
+        if action == "remove":
+            return mgr.remove_avoid_ingredient(ingredient)
+        return mgr.add_avoid_ingredient(ingredient)
+
+    async def handle_add_banned(call: ServiceCall) -> ServiceResponse:
+        """Ajoute ou retire un ingrédient interdit (allergie)."""
+        mgr = _get_manager(hass, call, manager)
+        ingredient = call.data.get("ingredient", "")
+        action = call.data.get("action", "add")
+        if action == "remove":
+            return mgr.remove_banned_ingredient(ingredient)
+        return mgr.add_banned_ingredient(ingredient)
 
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
@@ -431,6 +453,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }),
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_ADD_AVOID, handle_add_avoid,
+        schema=vol.Schema({
+            vol.Required("ingredient"): cv.string,
+            vol.Optional("action", default="add"): vol.In(["add", "remove"]),
+        }),
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ADD_BANNED, handle_add_banned,
+        schema=vol.Schema({
+            vol.Required("ingredient"): cv.string,
+            vol.Optional("action", default="add"): vol.In(["add", "remove"]),
+        }),
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
         schema=vol.Schema({
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
@@ -477,6 +513,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_EXCLUDE_INGREDIENT,
                 SERVICE_GET_CONTEXT,
                 SERVICE_CLEAR_RECENT,
+                SERVICE_ADD_AVOID,
+                SERVICE_ADD_BANNED,
             ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok
