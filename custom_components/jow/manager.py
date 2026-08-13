@@ -759,10 +759,21 @@ class JowManager:
         if criteria:
             constraints += f"Demande : {criteria}. "
 
+        # Recettes récentes à éviter pour la diversité
+        from datetime import date as _date, timedelta as _td
+        cutoff = (_date.today() - _td(weeks=4)).isoformat()
+        recent_names = []
+        for day_iso, meal in self.plan.items():
+            if meal and meal.get("name") and day_iso >= cutoff:
+                recent_names.append(meal["name"])
+        if recent_names:
+            constraints += f"Évite ces plats déjà faits récemment : {', '.join(recent_names[:8])}. Propose quelque chose de différent. "
+
         instructions = (
             f"{weather_ctx}{constraints}"
             "Génère une requête de recherche de recette courte (2 à 5 mots, "
             "sans guillemets ni ponctuation) adaptée au contexte. "
+            "Varie le style de cuisine et le type de plat. "
             "Réponds uniquement avec la requête."
         )
 
@@ -805,7 +816,7 @@ class JowManager:
             query = criteria or "recette"
 
         _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
-        results = await self.async_search(query, limit=max(limit * 3, 15))
+        results = await self.async_search(query, limit=max(limit * 5, 30))
         covers = covers or self.default_covers
         recipes = [_recipe_to_dict(r, covers) for r in results]
 
