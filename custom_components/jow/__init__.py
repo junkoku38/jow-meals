@@ -352,7 +352,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
-        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_COPY_MEAL, handle_copy_meal,
@@ -365,7 +364,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_TO_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
-        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_COVERS, handle_set_covers,
@@ -376,7 +374,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
-        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_EXCLUDE_INGREDIENT, handle_exclude_ingredient,
@@ -384,7 +381,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required(ATTR_INGREDIENT): cv.string,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
-        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,
