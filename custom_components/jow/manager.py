@@ -732,6 +732,7 @@ class JowManager:
         ai_entity: str | None = None,
         weekday: str | None = None,
         week_offset: int = 0,
+        ai_prompt: str = "",
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -776,6 +777,13 @@ class JowManager:
             "Varie le style de cuisine et le type de plat. "
             "Réponds uniquement avec la requête."
         )
+        # Prompt IA personnalisé depuis la config de la carte
+        if ai_prompt:
+            instructions = (
+                f"{weather_ctx}{constraints}"
+                f"{ai_prompt} "
+                "Réponds uniquement avec la requête de recherche."
+            )
 
         # Appel ai_task.generate_data
         query = ""

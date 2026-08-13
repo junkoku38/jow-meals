@@ -186,6 +186,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             ai_entity=call.data.get(CONF_AI_ENTITY),
             weekday=call.data.get(ATTR_WEEKDAY),
             week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+            ai_prompt=call.data.get("ai_prompt", ""),
         )
         return {"recipes": results}
 
@@ -330,6 +331,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
+            vol.Optional("ai_prompt"): cv.string,
         }),
     )
     hass.services.async_register(
