@@ -454,6 +454,7 @@ class JowManager:
     async def async_clear_meal(self, day: date) -> None:
         self.plan.pop(day.isoformat(), None)
         await self.async_save()
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
     async def async_copy_meal(self, from_day: date, to_day: date) -> dict | None:
         """Copie un repas d'un jour vers un autre (pratique pour les restes)."""
@@ -462,6 +463,7 @@ class JowManager:
             return None
         self.plan[to_day.isoformat()] = meal
         await self.async_save()
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
 
     async def async_set_covers(self, day: date, covers: int) -> dict | None:
@@ -480,6 +482,7 @@ class JowManager:
                 except (TypeError, ValueError):
                     pass
         await self.async_save()
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         return {"covers": covers, "day": day.isoformat()}
 
     async def async_exclude_ingredient(self, ingredient: str) -> dict:
@@ -496,6 +499,7 @@ class JowManager:
                 kept.append(item)
         self.shopping = kept
         await self.async_save()
+        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         return {"removed": removed, "count": len(removed)}
 
     async def async_sync_calories(self, week_offset: int = 0) -> int:
