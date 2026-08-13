@@ -502,6 +502,18 @@ class JowManager:
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         return {"removed": removed, "count": len(removed)}
 
+    async def async_clear_recent(self, date_iso: str) -> dict:
+        """Retire un plat de l'historique d'anti-répétition.
+        Soit on supprime le repas de cette date, soit on garde le repas
+        mais on marque son ID comme 'non exclu' pour les futures suggestions."""
+        meal = self.plan.get(date_iso)
+        if not meal:
+            return {"error": "Aucun repas à cette date"}
+        # Marquer le repas comme non-exclu pour les futures suggestions
+        meal["_no_exclude"] = True
+        await self.async_save()
+        return {"cleared": meal.get("name", ""), "date": date_iso}
+
     async def async_sync_calories(self, week_offset: int = 0) -> int:
         """Récupère les calories manquantes pour tous les repas planifiés.
 
@@ -836,7 +848,9 @@ class JowManager:
         deja_planifies = set()
         for day_iso, meal in self.plan.items():
             if meal and meal.get("id") and day_iso >= cutoff:
-                deja_planifies.add(meal["id"])
+                # Ignorer les repas marqués _no_exclude (retirés de l'anti-répétition)
+                if not meal.get("_no_exclude"):
+                    deja_planifies.add(meal["id"])
         if deja_planifies:
             avant = len(recipes)
             recipes = [r for r in recipes if r.get("id") not in deja_planifies]
