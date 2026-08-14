@@ -819,6 +819,8 @@ class JowManager:
             f"{weather_ctx}{constraints}"
             "Génère une requête de recherche de recette courte (2 à 5 mots, "
             "sans guillemets ni ponctuation) adaptée au contexte. "
+            "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
+            "JAMAIS de boisson, cocktail ou apéritif. "
             "Varie le style de cuisine et le type de plat. "
             "Réponds uniquement avec la requête."
         )
@@ -827,6 +829,8 @@ class JowManager:
             instructions = (
                 f"{weather_ctx}{constraints}"
                 f"{ai_prompt} "
+                "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
+                "JAMAIS de boisson, cocktail ou apéritif. "
                 "Réponds uniquement avec la requête de recherche."
             )
 
