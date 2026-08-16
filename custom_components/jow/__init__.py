@@ -396,6 +396,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
             vol.Optional("ai_prompt"): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_PROFILE, handle_sync_profile,
@@ -439,6 +440,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_EXCLUDE_INGREDIENT, handle_exclude_ingredient,
