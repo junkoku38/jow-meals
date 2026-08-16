@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import date, datetime
 
 import voluptuous as vol
-from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
@@ -85,7 +83,11 @@ def _resolve_date(manager: JowManager, call: ServiceCall) -> date:
     if raw := call.data.get(ATTR_DATE):
         if isinstance(raw, date):
             return raw
-        return datetime.fromisoformat(str(raw)).date()
+        try:
+            return datetime.fromisoformat(str(raw)).date()
+        except ValueError:
+            _LOGGER.warning("Date invalide reçue « %s », utilisation d'aujourd'hui", raw)
+            return date.today()
 
     weekday = call.data.get(ATTR_WEEKDAY)
     offset = call.data.get(ATTR_WEEK_OFFSET, 0)
@@ -99,7 +101,11 @@ def _resolve_to_date(manager: JowManager, call: ServiceCall) -> date:
     if raw := call.data.get(ATTR_TO_DATE):
         if isinstance(raw, date):
             return raw
-        return datetime.fromisoformat(str(raw)).date()
+        try:
+            return datetime.fromisoformat(str(raw)).date()
+        except ValueError:
+            _LOGGER.warning("Date invalide reçue « %s », utilisation d'aujourd'hui", raw)
+            return date.today()
     weekday = call.data.get(ATTR_TO_WEEKDAY)
     offset = call.data.get(ATTR_TO_WEEK_OFFSET, call.data.get(ATTR_WEEK_OFFSET, 0))
     if weekday:
@@ -489,10 +495,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Décharge l'intégration."""
     manager: JowManager = hass.data.get(DOMAIN, {}).get(entry.entry_id)
-    if manager and manager._token_refresh_cancel:
-        manager._token_refresh_cancel()
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
+        if manager and manager._token_refresh_cancel:
+            manager._token_refresh_cancel()
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             for service in (

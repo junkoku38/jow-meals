@@ -56,7 +56,6 @@ _JOW_HEADERS = {
     "referer": "https://jow.fr/",
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
 }
-_JOW_PARAMS = {"start": "0", "availabilityZoneId": "FR"}
 _ALLOWED_URL_SCHEMES = {"http", "https"}
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -550,18 +549,27 @@ class JowManager:
         détail de Jow pour chaque repas qui n'en a pas encore. Retourne le
         nombre de repas mis à jour.
         """
-        updated = 0
-        for day in self.week_dates(week_offset):
+        import asyncio
+        days = self.week_dates(week_offset)
+        pending = []
+        for day in days:
             meal = self.get_meal(day)
             if not meal or meal.get("calories") is not None:
                 continue
             recipe_id = _safe_id(meal.get("id"))
             if not recipe_id:
                 continue
-            calories = await self.async_fetch_calories(recipe_id)
-            if calories is not None:
-                meal["calories"] = calories
-                updated += 1
+            pending.append((day, meal, recipe_id))
+        results = await asyncio.gather(
+            *[self.async_fetch_calories(rid) for _, _, rid in pending],
+            return_exceptions=True,
+        )
+        updated = 0
+        for (day, meal, _), calories in zip(pending, results):
+            if isinstance(calories, Exception) or calories is None:
+                continue
+            meal["calories"] = calories
+            updated += 1
         if updated:
             await self.async_save()
         return updated
@@ -1006,8 +1014,10 @@ class JowManager:
             result = await self.hass.async_add_executor_job(_refresh)
             if result:
                 new_access, new_refresh = result
-                if new_access:
-                    self.jow_token = new_access
+                if not new_access:
+                    _LOGGER.warning("Rafraîchissement token Jow : access token vide renvoyé par l'API")
+                    return False
+                self.jow_token = new_access
                 if new_refresh:
                     self.jow_refresh_token = new_refresh
                 _LOGGER.info("Token Jow rafraîchi avec succès (via refresh token)")
@@ -1082,7 +1092,7 @@ class JowManager:
                 pref_labels.append(label)
         if pref_labels:
             self.preferences = ", ".join(pref_labels)
-            _LOGGER.info("Préférences synchronisées depuis Jow : %s", self.preferences)
+            _LOGGER.debug("Préférences synchronisées depuis Jow : %s", self.preferences)
 
         # Excluded ingredients → allergies/interdits
         excluded = profile.get("excludedIngredientTastes", [])
@@ -1090,7 +1100,7 @@ class JowManager:
             allergy_names = [e.get("name", "") for e in excluded if e.get("name")]
             if allergy_names:
                 self.allergies = ", ".join(allergy_names)
-                _LOGGER.info("Allergies synchronisées depuis Jow : %s", self.allergies)
+                _LOGGER.debug("Allergies synchronisées depuis Jow : %s", self.allergies)
 
     async def async_get_excluded_ingredients(self) -> list[str]:
         """Retourne la liste des ingrédients exclus du compte Jow."""
@@ -1204,16 +1214,17 @@ class JowManager:
             )
             return resp.status_code
 
+        import asyncio
+        tasks = [self.hass.async_add_executor_job(_send, rid) for rid in recipe_ids]
+        statuses = await asyncio.gather(*tasks, return_exceptions=True)
         sent = 0
-        for rid in recipe_ids:
-            try:
-                status = await self.hass.async_add_executor_job(_send, rid)
-                if status in (200, 204):
-                    sent += 1
-                else:
-                    _LOGGER.warning("Envoi recette %s à Jow : status %s", rid, status)
-            except Exception as err:
-                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", rid, err)
+        for rid, status in zip(recipe_ids, statuses):
+            if isinstance(status, Exception):
+                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", rid, status)
+            elif status in (200, 204):
+                sent += 1
+            else:
+                _LOGGER.warning("Envoi recette %s à Jow : status %s", rid, status)
 
         _LOGGER.info("Menu envoyé à Jow : %d/%d recettes", sent, len(recipe_ids))
         return sent
@@ -1274,6 +1285,7 @@ class JowManager:
             )
             # Vider le refresh token pour arrêter les tentatives inutiles
             self.jow_refresh_token = ""
+            await self._async_persist_tokens()
 
     async def async_check_token_validity(self) -> bool:
         """Vérifie si le token Jow est encore valide."""
