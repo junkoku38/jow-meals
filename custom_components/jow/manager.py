@@ -844,6 +844,20 @@ class JowManager:
 
         # Appel ai_task.generate_data
         query = ""
+        criteria_words = (criteria or "").strip().split()
+        is_long_phrase = len(criteria_words) > 5
+        
+        # Si phrase longue, adapter les instructions pour extraire une requête courte
+        if is_long_phrase and ai_ent:
+            instructions = (
+                f"{weather_ctx}{constraints}"
+                f"Transforme cette demande en requête de recherche de recette "
+                f"courte (2 à 5 mots) : « {criteria} ». "
+                "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
+                "JAMAIS de boisson, cocktail ou apéritif. "
+                "Réponds uniquement avec la requête de recherche."
+            )
+        
         if ai_ent:
             try:
                 response = await self.hass.services.async_call(
@@ -876,9 +890,17 @@ class JowManager:
                 _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
                 query = ""
 
-        # Fallback : utiliser criteria directement
+        # Fallback : utiliser criteria directement ou extraire les mots-clés
         if not query:
-            query = criteria or "recette"
+            if is_long_phrase:
+                stop_words = {"propose", "moi", "un", "une", "des", "avec", "sans",
+                              "facile", "faire", "base", "pour", "the", "and",
+                              "repas", "recette", "cherche", "plat"}
+                keywords = [w for w in criteria_words
+                           if len(w) > 3 and w.lower() not in stop_words]
+                query = " ".join(keywords[:4]) if keywords else "recette"
+            else:
+                query = criteria or "recette"
 
         _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
         results = await self.async_search(query, limit=max(limit * 5, 30))
