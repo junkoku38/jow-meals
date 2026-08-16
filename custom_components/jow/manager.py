@@ -847,12 +847,18 @@ class JowManager:
         criteria_words = (criteria or "").strip().split()
         is_long_phrase = len(criteria_words) > 5
         
-        # Si phrase longue, adapter les instructions pour extraire une requête courte
+        # Si phrase longue, l'IA raisonne pour proposer une requête pertinente
         if is_long_phrase and ai_ent:
             instructions = (
                 f"{weather_ctx}{constraints}"
-                f"Transforme cette demande en requête de recherche de recette "
-                f"courte (2 à 5 mots) : « {criteria} ». "
+                f"Un utilisateur demande : « {criteria} ». "
+                "Analyse cette demande et génère la meilleure requête de "
+                "recherche de recette (2 à 5 mots) pour trouver ce que "
+                "l'utilisateur veut vraiment. "
+                "Réfléchis : si l'utilisateur dit 'plat rapide avec du poulet "
+                "et des pâtes', propose 'pâtes poulet'. "
+                "Si l'utilisateur dit 'repas léger pour ce soir', propose "
+                "'salade composée' ou 'soupe légumes'. "
                 "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
                 "JAMAIS de boisson, cocktail ou apéritif. "
                 "Réponds uniquement avec la requête de recherche."
