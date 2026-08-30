@@ -1,0 +1,286 @@
+"""Tests des fonctions pures de manager.py (sans Home Assistant).
+
+manager.py importe homeassistant.* en tête de fichier : on injecte des
+stubs minimaux dans sys.modules avant l'import pour tester la logique
+métier (agrégation, allergènes, filtres, rayons) en isolation.
+"""
+
+from __future__ import annotations
+
+import sys
+import types
+from datetime import date, timedelta
+from unittest.mock import MagicMock
+
+
+def _stub_homeassistant() -> None:
+    """Crée des modules homeassistant factices si absents."""
+    if "homeassistant" in sys.modules:
+        return
+
+    def _make(name: str, **attrs) -> types.ModuleType:
+        mod = types.ModuleType(name)
+        for k, v in attrs.items():
+            setattr(mod, k, v)
+        sys.modules[name] = mod
+        return mod
+
+    ha = _make("homeassistant")
+    _make("homeassistant.core", HomeAssistant=MagicMock)
+    _make(
+        "homeassistant.helpers.dispatcher",
+        async_dispatcher_send=MagicMock(),
+    )
+    _make(
+        "homeassistant.helpers.storage",
+        Store=lambda *a, **k: MagicMock(),
+    )
+    _make("requests", post=MagicMock(), get=MagicMock(), options=MagicMock())
+
+
+_stub_homeassistant()
+
+# Charger manager.py comme membre d'un package factice pour que son
+# import relatif "from .const import ..." fonctionne, sans exécuter le
+# vrai custom_components.jow.__init__ (qui importe tout Home Assistant).
+import importlib.util  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_pkg = types.ModuleType("jow_pkg_under_test")
+_jow_dir = Path(__file__).parent.parent / "custom_components" / "jow"
+_pkg.__path__ = [str(_jow_dir)]
+sys.modules["jow_pkg_under_test"] = _pkg
+
+_const_spec = importlib.util.spec_from_file_location(
+    "jow_pkg_under_test.const",
+    _jow_dir / "const.py",
+)
+_const = importlib.util.module_from_spec(_const_spec)
+sys.modules["jow_pkg_under_test.const"] = _const
+_const_spec.loader.exec_module(_const)
+
+_mgr_spec = importlib.util.spec_from_file_location(
+    "jow_pkg_under_test.manager",
+    _jow_dir / "manager.py",
+)
+_mod = importlib.util.module_from_spec(_mgr_spec)
+sys.modules["jow_pkg_under_test.manager"] = _mod
+_mgr_spec.loader.exec_module(_mod)
+
+JowManager = _mod.JowManager
+_deduce_allergens = _mod._deduce_allergens
+_jow_ingredient_unit = _mod._jow_ingredient_unit
+_recipe_to_dict = _mod._recipe_to_dict
+_safe_id = _mod._safe_id
+_safe_url = _mod._safe_url
+_truncate = _mod._truncate
+aisle = _mod._aisle_for
+
+
+def _manager() -> JowManager:
+    return JowManager(MagicMock(), 2, entry_id="test")
+
+
+# ---------------------------------------------------------------------------
+# Allergènes INCO (déduction heuristique depuis les tastes)
+# ---------------------------------------------------------------------------
+
+def _constituent(name: str, tastes: list[str]) -> dict:
+    return {
+        "ingredient": {
+            "name": name,
+            "tastes": [{"name": t} for t in tastes],
+            "quantityPerCover": 100,
+        },
+        "unit": {"id": "u1"},
+    }
+
+
+def test_deduce_allergens_lait_fromage():
+    recipe = {
+        "constituents": [
+            _constituent("emmental", ["Fromage"]),
+            _constituent("pâtes", ["Pâtes fraîches"]),
+        ]
+    }
+    codes, source = _deduce_allergens(recipe)
+    assert 7 in codes  # fromage -> lait
+    assert 1 in codes  # pâtes -> gluten
+    assert source == "estimated"
+
+
+def test_deduce_allergens_bleu_fromage_pas_ble():
+    # "ble" (blé, gluten) ne doit pas matcher "Bleu de brebis" (fromage)
+    # ni inversement "bleu" ne doit pas donner gluten.
+    recipe = {"constituents": [_constituent("bleu de brebis", ["Fromage bleu"])]}
+    codes, _ = _deduce_allergens(recipe)
+    assert codes == [7]  # lait uniquement
+
+
+def test_deduce_allergens_vide():
+    codes, source = _deduce_allergens({})
+    assert codes == []
+    assert source == "estimated"
+
+
+# ---------------------------------------------------------------------------
+# _recipe_to_dict
+# ---------------------------------------------------------------------------
+
+def test_recipe_to_dict_quantities_ratio():
+    recipe = {
+        "_id": "abc-123_XY",
+        "title": "Curry de poulet",
+        "roundedCoversCount": 4,
+        "constituents": [
+            {
+                "ingredient": {
+                    "name": "poulet",
+                    "quantityPerCover": 150,
+                    "naturalUnit": {"_id": "u1", "name": "g"},
+                },
+                "unit": {"id": "u1"},
+            }
+        ],
+        "imageUrl": "//img/curry.jpg",
+        "videoUrl": "javascript:alert(1)",
+    }
+    out = _recipe_to_dict(recipe, covers=2)  # ratio 0.5
+    assert out["name"] == "Curry de poulet"
+    ing = out["ingredients"][0]
+    assert ing["quantity"] == 75.0  # 150 * 0.5
+    assert ing["unit"] == "g"
+    assert out["url"].endswith("abc-123_XY")
+    # http(s) uniquement : l'URL javascript: est rejetée
+    assert out["video"] is None
+
+
+def test_recipe_to_dict_non_dict():
+    assert _recipe_to_dict("pas un dict", 2) == {}
+
+
+def test_safe_url_rejette_javascript():
+    assert _safe_url("javascript:alert(1)") is None
+    assert _safe_url("https://jow.fr/x") == "https://jow.fr/x"
+    assert _safe_url(None) is None
+
+
+def test_safe_static_url_fragments():
+    safe_static = _mod._safe_static_url
+    # chemin relatif : assemblé derrière static.jow.fr
+    assert safe_static("img/x.jpg") == "https://static.jow.fr/img/x.jpg"
+    # schéma-relatif : https explicite
+    assert safe_static("//cdn.jow.fr/x.jpg") == "https://cdn.jow.fr/x.jpg"
+    # https complet : conservé tel quel
+    assert safe_static("https://static.jow.fr/img/y.jpg") == "https://static.jow.fr/img/y.jpg"
+    # fragments malicieux : rejetés AVANT concaténation
+    assert safe_static("javascript:alert(1)") is None
+    assert safe_static("data:text/html,<script>") is None
+    assert safe_static("vbscript:x") is None
+    assert safe_static("") is None
+
+
+def test_safe_id():
+    assert _safe_id("abc_123-X") == "abc_123-X"
+    assert _safe_id("../etc/passwd") is None
+    assert _safe_id("") is None
+
+
+def test_truncate():
+    assert _truncate(None, 5) is None
+    assert _truncate("abcdef", 3) == "abc"
+
+
+# ---------------------------------------------------------------------------
+# Agrégation des ingrédients
+# ---------------------------------------------------------------------------
+
+def test_aggregate_same_name_and_unit():
+    m = _manager()
+    # Semer les repas sur le lundi et le mardi de la SEMAINE COURANTE :
+    # aggregate_ingredients ne parcourt que week_dates(0).
+    monday = date.today() - timedelta(days=date.today().weekday())
+    m.plan = {
+        monday.isoformat(): {
+            "name": "A",
+            "ingredients": [
+                {"name": "riz", "quantity": 100, "unit": "g"},
+                {"name": "lait", "quantity": 0.5, "unit": "l"},
+            ],
+        },
+        (monday + timedelta(days=1)).isoformat(): {
+            "name": "B",
+            "ingredients": [
+                {"name": "Riz", "quantity": 50, "unit": "g"},  # même clé normalisée
+                {"name": "beurre", "quantity": None, "unit": ""},
+            ],
+        },
+    }
+    lines = m.aggregate_ingredients()
+    joined_lower = " | ".join(lines).lower()
+    assert "150 g riz" in joined_lower  # 100 + 50
+    assert "beurre" in joined_lower    # sans quantité : nom seul
+
+
+def test_aggregate_ignores_optional():
+    m = _manager()
+    m.plan = {
+        date.today().isoformat(): {
+            "name": "A",
+            "ingredients": [{"name": "parmesan", "quantity": 10, "unit": "g", "optional": True}],
+        }
+    }
+    assert m.aggregate_ingredients() == []
+
+
+# ---------------------------------------------------------------------------
+# Rayons
+# ---------------------------------------------------------------------------
+
+def test_aisle_for():
+    assert aisle("Tomates cerises") == "Fruits & Légumes"
+    assert aisle("Filet de boeuf") == "Boucherie"
+    assert aisle("Saumon fumé") == "Poissonnerie"
+    assert aisle("Lait demi-écrémé") == "Crémerie"
+    assert aisle("Spaghetti n°5") == "Épicerie salée"
+    assert aisle("Chocolat noir") == "Épicerie sucrée"
+    assert aisle("Éponge magique") == "Autre"
+
+
+# ---------------------------------------------------------------------------
+# Unités Jow
+# ---------------------------------------------------------------------------
+
+def test_jow_ingredient_unit():
+    const = {
+        "unit": {"id": "u2"},
+        "ingredient": {
+            "naturalUnit": {"_id": "u1", "name": "g"},
+            "alternativeUnits": [{"unit": {"_id": "u2", "name": "cs"}}],
+        },
+    }
+    assert _jow_ingredient_unit(const) == "cs"
+    assert _jow_ingredient_unit({}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Persistance interdits / à éviter
+# ---------------------------------------------------------------------------
+
+def test_add_remove_banned_normalizes_and_dedupes():
+    m = _manager()
+    m.async_save = lambda: types.coroutine(lambda: None)()  # no-op async
+    import asyncio
+
+    m.banned_ingredients = []
+    m.avoid_ingredients = []
+
+
+def test_purge_old():
+    m = _manager()
+    old = (date.today() - timedelta(days=40)).isoformat()
+    recent = (date.today() - timedelta(days=3)).isoformat()
+    m.plan = {old: {"name": "vieux"}, recent: {"name": "récent"}}
+    m.purge_old()
+    assert old not in m.plan
+    assert recent in m.plan

@@ -142,6 +142,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     await manager.async_load()
     manager.purge_old()
+    # Purge hebdomadaire du planning (indépendante du token Jow)
+    manager.async_start_purge()
     # Si on a un refresh token mais pas d'access token valide, on en
     # génère un immédiatement au démarrage.
     if manager.jow_refresh_token and not manager.is_authenticated:
@@ -516,6 +518,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if unload_ok:
         if manager and manager._token_refresh_cancel:
             manager._token_refresh_cancel()
+        if manager and getattr(manager, "_purge_cancel", None):
+            manager._purge_cancel()
         hass.data[DOMAIN].pop(entry.entry_id)
         if not hass.data[DOMAIN]:
             for service in (

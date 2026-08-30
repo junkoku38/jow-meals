@@ -71,6 +71,33 @@ def _safe_url(value: Any, fallback: str | None = None) -> str | None:
     return fallback
 
 
+def _safe_static_url(value: Any, fallback: str | None = None) -> str | None:
+    """Valide un fragment d'URL statique Jow AVANT concaténation.
+
+    L'API renvoie des chemins relatifs ("img/x.jpg" ou "//cdn/x.jpg") ;
+    un fragment malicieux ("javascript:…") collé derrière l'origine
+    donnerait une URL en apparence valide après assemblage.
+    """
+    if not value or not isinstance(value, str):
+        return fallback
+    text = value.strip()
+    # Tout fragment contenant un schéma est rejeté, sauf https explicite.
+    if "://" in text or text.lower().startswith(("javascript:", "data:", "vbscript:")):
+        parsed = urlparse(text)
+        if parsed.scheme == "https" and parsed.netloc:
+            return text
+        _LOGGER.warning("Fragment d'URL Jow rejeté : %r", value)
+        return fallback
+    if text.startswith("//"):
+        # "//cdn.jow.fr/x" : schéma-relatif -> https explicite
+        if urlparse(text).netloc:
+            return f"https:{text}"
+        return fallback
+    # Chemin relatif simple ("img/x.jpg", "/img/x.jpg") : assemblage sûr,
+    # ni schéma ni protocole possible.
+    return f"{_JOW_STATIC_URL}{text.lstrip('/')}"
+
+
 def _safe_id(value: Any) -> str | None:
     """Retourne un identifiant alphanumérique safe, ou None."""
     if not value:
@@ -154,21 +181,28 @@ def _deduce_allergens(recipe: Any) -> tuple[list[int], str]:
     déduction est heuristique (les noms Jow peuvent varier).
     """
     codes: set[int] = set()
+    # Clés triées par longueur décroissante : la plus longue matche
+    # d'abord à chaque position ("bleu" fromage avant "ble" blé —
+    # sinon « Fromage bleu » serait tagué gluten ; « quiche » et
+    # « bleu » dans « Quiche au bleu » donnent bien gluten ET lait).
+    ordered_keys = sorted(_TASTE_TO_INCO.keys(), key=len, reverse=True)
     for const in recipe.get("constituents", []) or []:
         ing = const.get("ingredient", {})
-        # tastes est une liste de dicts avec un champ "name"
         for taste in ing.get("tastes", []) or []:
             name = (taste.get("name") or "").lower().strip()
             if not name:
                 continue
-            # Match par inclusion du nom de taste dans la clé du mapping
-            # (ex: "Pâtes fraîches" contient "pâtes"). On évite l'inclusion
-            # inverse (name in key) qui génère des faux positifs (ex: "ble"
-            # dans "bleu" → fromage → lait au lieu de blé → gluten).
-            for key, code in _TASTE_TO_INCO.items():
-                if key in name:
-                    codes.add(code)
-                    break
+            pos = 0
+            while pos < len(name):
+                matched = False
+                for key in ordered_keys:
+                    if name.startswith(key, pos):
+                        codes.add(_TASTE_TO_INCO[key])
+                        pos += len(key)
+                        matched = True
+                        break
+                if not matched:
+                    pos += 1
     return sorted(codes), "estimated"
 
 
@@ -210,12 +244,19 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
 
     recipe_id = _safe_id(recipe.get("_id") or recipe.get("id"))
     url = f"{RECIPE_BASE_URL}{recipe_id}" if recipe_id else None
+    # Valider chaque fragment AVANT concaténation : un imageUrl malicieux
+    # ("javascript:…") collé derrière static.jow.fr donnerait une URL en
+    # apparence valide après assemblage.
     image = None
     if recipe.get("imageUrl"):
-        image = _safe_url(f"{_JOW_STATIC_URL}{recipe['imageUrl']}")
+        image = _safe_static_url(recipe["imageUrl"])
+        if image is None:
+            _LOGGER.warning("imageUrl Jow rejeté : %r", recipe.get("imageUrl"))
     video = None
     if recipe.get("videoUrl"):
-        video = _safe_url(f"{_JOW_STATIC_URL}{recipe['videoUrl']}")
+        video = _safe_static_url(recipe["videoUrl"])
+        if video is None:
+            _LOGGER.warning("videoUrl Jow rejeté : %r", recipe.get("videoUrl"))
 
     # Allergènes INCO déduits des tastes des constituants (heuristique).
     allergens, allergens_source = _deduce_allergens(recipe)
@@ -271,7 +312,10 @@ _AISLE_MAP: dict[str, str] = {
     "œuf": "Crémerie", "oeuf": "Crémerie", "mozzarella": "Crémerie",
     "parmesan": "Crémerie", "emmental": "Crémerie", "feta": "Crémerie",
     # Épicerie salée
-    "pâtes": "Épicerie salée", "pate": "Épicerie salée", "riz": "Épicerie salée",
+    "pâtes": "Épicerie salée", "pate": "Épicerie salée", "spaghetti": "Épicerie salée",
+    "macaroni": "Épicerie salée", "penne": "Épicerie salée", "tagliatelle": "Épicerie salée",
+    "noodle": "Épicerie salée", "lasagne": "Épicerie salée",
+    "riz": "Épicerie salée",
     "couscous": "Épicerie salée", "quinoa": "Épicerie salée",
     "lentille": "Épicerie salée", "pois chiche": "Épicerie salée",
     "haricot": "Épicerie salée", "tomate concentré": "Épicerie salée",
@@ -387,10 +431,9 @@ class JowManager:
 
         def _search():
             params = {"start": "0", "availabilityZoneId": "FR", "query": query, "limit": str(max(limit, 1))}
-            # Preflight OPTIONS (l'API Jow exige un preflight CORS)
-            options_headers = {"accept": "*/*", "accept-language": "fr,fr-FR;q=0.9", "access-control-request-method": "POST", "access-control-request-headers": "content-type,x-jow-withmeta"}
-            requests.options(_JOW_SEARCH_URL, headers=options_headers, params=params, timeout=10)
-            # POST réel
+            # Pas de préflight OPTIONS : le CORS preflight est une
+            # contrainte navigateur, inutile côté serveur — il doublait
+            # la latence de chaque recherche.
             resp = requests.post(
                 _JOW_SEARCH_URL, headers=dict(_JOW_HEADERS), params=params, data="{}", timeout=15
             )
@@ -652,7 +695,9 @@ class JowManager:
 
         Fusionne les ingrédients agrégés du planning avec la liste approuvée
         (articles à toujours acheter, hors planning) en dédoublonnant sur le
-        libellé normalisé.
+        libellé normalisé. Les articles ajoutés manuellement via l'UI todo
+        (marqués "manual") sont conservés : la régénération ne doit jamais
+        effacer ce que l'utilisateur a ajouté lui-même.
         """
         done = {item["summary"] for item in self.shopping if item.get("done")} if keep_checked else set()
         auto_lines = self.aggregate_ingredients(week_offset)
@@ -671,6 +716,24 @@ class JowManager:
                 seen.add(self._norm(summary))
                 merged.append(
                     {"uid": uuid.uuid4().hex, "summary": summary, "done": summary in done}
+                )
+        # Articles ajoutés manuellement depuis l'UI todo : préservés,
+        # dédoublonnés, et replacés en fin de liste (ordre d'ajout conservé).
+        for item in self.shopping:
+            if not item.get("manual"):
+                continue
+            summary = item.get("summary", "")
+            if not summary.strip():
+                continue
+            if self._norm(summary) not in seen:
+                seen.add(self._norm(summary))
+                merged.append(
+                    {
+                        "uid": item.get("uid") or uuid.uuid4().hex,
+                        "summary": summary,
+                        "done": item.get("done", False),
+                        "manual": True,
+                    }
                 )
         self.shopping = merged
         await self.async_save()
@@ -691,7 +754,11 @@ class JowManager:
         clean = (summary or "")[:_MAX_SUMMARY_LEN]
         if not clean.strip():
             return
-        self.shopping.append({"uid": uuid.uuid4().hex, "summary": clean, "done": False})
+        # "manual" : ajouté par l'utilisateur via l'UI todo — conservé
+        # lors des régénérations de la liste.
+        self.shopping.append(
+            {"uid": uuid.uuid4().hex, "summary": clean, "done": False, "manual": True}
+        )
         await self.async_save()
 
     async def async_update_item(self, uid: str, summary: str | None, done: bool | None) -> None:
@@ -889,16 +956,24 @@ class JowManager:
         
         if ai_ent:
             try:
-                response = await self.hass.services.async_call(
-                    "ai_task",
-                    "generate_data",
-                    {
-                        "task_name": "jow_recipe_suggest",
-                        "instructions": instructions,
-                        "entity_id": ai_ent,
-                    },
-                    blocking=True,
-                    return_response=True,
+                # Timeout explicite : un agent IA qui pend ne doit pas
+                # bloquer le service (et l'automatisation appelante)
+                # indéfiniment — blocking=True sans limite attendrait
+                # la réponse pour toujours.
+                import asyncio as _asyncio
+                response = await _asyncio.wait_for(
+                    self.hass.services.async_call(
+                        "ai_task",
+                        "generate_data",
+                        {
+                            "task_name": "jow_recipe_suggest",
+                            "instructions": instructions,
+                            "entity_id": ai_ent,
+                        },
+                        blocking=True,
+                        return_response=True,
+                    ),
+                    timeout=60,
                 )
                 # Selon la version HA, response peut être:
                 # {"conversation_id": ..., "data": "..."}  (via WS)
@@ -1305,6 +1380,25 @@ class JowManager:
             self._async_check_token_callback,
             timedelta(seconds=JOW_TOKEN_REFRESH_INTERVAL),
         )
+
+    def async_start_purge(self) -> None:
+        """Purge hebdomadaire du planning : les repas de plus de 30 jours
+        ne servent plus (l'anti-répétition n'a besoin que de 4 semaines)
+        et gonfleraient le stockage indéfiniment sur un HA qui tourne
+        des mois sans redémarrer. Indépendant du token Jow."""
+        from homeassistant.helpers.event import async_track_time_interval
+
+        if getattr(self, "_purge_cancel", None):
+            self._purge_cancel()
+        self._purge_cancel = async_track_time_interval(
+            self.hass,
+            self._async_purge_callback,
+            timedelta(days=7),
+        )
+
+    async def _async_purge_callback(self, now=None) -> None:
+        """Purge périodique du planning (repas de plus de 30 jours)."""
+        self.purge_old()
 
     async def _async_check_token_callback(self, now=None) -> None:
         """Rafraîchit périodiquement le token Jow.
