@@ -65,16 +65,24 @@ def _get_manager(hass: HomeAssistant, call: ServiceCall, default_manager: JowMan
     """Résout le bon manager selon le paramètre entry_name.
 
     Si entry_name est fourni, on cherche l'instance correspondante.
-    Sinon, on retombe sur l'instance par défaut (la première configurée).
+    Sinon, on retombe sur la première instance configurée (ordre des
+    config entries, stable d'un redémarrage à l'autre) — et non sur
+    celle capturée par la closure du dernier setup, dont l'ordre
+    dépendrait de l'ordre de chargement des entrées.
     """
     entry_name = call.data.get("entry_name")
+    instances = hass.data.get(DOMAIN, {})
     if not entry_name:
+        for entry_id in instances:
+            return instances[entry_id]
         return default_manager
-    for entry_id, manager in hass.data.get(DOMAIN, {}).items():
+    for entry_id, manager in instances.items():
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry and (entry.title == entry_name or entry.data.get("name") == entry_name):
             return manager
     _LOGGER.warning("Instance Jow « %s » introuvable, utilisation de l'instance par défaut", entry_name)
+    for entry_id in instances:
+        return instances[entry_id]
     return default_manager
 
 
@@ -306,8 +314,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ingredient = call.data.get("ingredient", "")
         action = call.data.get("action", "add")
         if action == "remove":
-            return mgr.remove_avoid_ingredient(ingredient)
-        return mgr.add_avoid_ingredient(ingredient)
+            return await mgr.async_remove_avoid_ingredient(ingredient)
+        return await mgr.async_add_avoid_ingredient(ingredient)
 
     async def handle_add_banned(call: ServiceCall) -> ServiceResponse:
         """Ajoute ou retire un ingrédient interdit (allergie)."""
@@ -315,8 +323,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ingredient = call.data.get("ingredient", "")
         action = call.data.get("action", "add")
         if action == "remove":
-            return mgr.remove_banned_ingredient(ingredient)
-        return mgr.add_banned_ingredient(ingredient)
+            return await mgr.async_remove_banned_ingredient(ingredient)
+        return await mgr.async_add_banned_ingredient(ingredient)
 
     async def handle_sync_calories(call: ServiceCall) -> ServiceResponse:
         """Récupère les calories manquantes pour tous les repas planifiés."""
@@ -418,6 +426,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_COPY_MEAL, handle_copy_meal,
@@ -430,6 +439,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_TO_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_COVERS, handle_set_covers,
@@ -448,6 +458,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required(ATTR_INGREDIENT): cv.string,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_GET_CONTEXT, handle_get_context,
@@ -460,6 +471,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required("date"): cv.string,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ADD_AVOID, handle_add_avoid,
@@ -467,6 +479,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required("ingredient"): cv.string,
             vol.Optional("action", default="add"): vol.In(["add", "remove"]),
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ADD_BANNED, handle_add_banned,
@@ -474,6 +487,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Required("ingredient"): cv.string,
             vol.Optional("action", default="add"): vol.In(["add", "remove"]),
         }),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SYNC_CALORIES, handle_sync_calories,

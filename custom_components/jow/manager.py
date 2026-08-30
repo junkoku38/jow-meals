@@ -353,10 +353,29 @@ class JowManager:
         self.plan = data.get("plan", {})
         self.shopping = data.get("shopping", [])
         self.approved = data.get("approved", [])
+        # Ingrédients interdits / à éviter : persistés pour survivre aux
+        # redémarrages (ajoutés via la carte ou le service, pas seulement
+        # synchronisés depuis Jow).
+        banned = data.get("banned_ingredients", [])
+        avoid = data.get("avoid_ingredients", [])
+        # Ne garder que des chaînes nettoyées (défense contre un stockage
+        # corrompu par une version antérieure).
+        self.banned_ingredients = [
+            str(b).strip().lower() for b in banned if isinstance(b, str) and b.strip()
+        ]
+        self.avoid_ingredients = [
+            str(a).strip().lower() for a in avoid if isinstance(a, str) and a.strip()
+        ]
 
     async def async_save(self) -> None:
         await self._store.async_save(
-            {"plan": self.plan, "shopping": self.shopping, "approved": self.approved}
+            {
+                "plan": self.plan,
+                "shopping": self.shopping,
+                "approved": self.approved,
+                "banned_ingredients": self.banned_ingredients,
+                "avoid_ingredients": self.avoid_ingredients,
+            }
         )
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
 
@@ -516,30 +535,34 @@ class JowManager:
         await self.async_save()
         return {"cleared": meal.get("name", ""), "date": date_iso}
 
-    def add_avoid_ingredient(self, ingredient: str) -> dict:
+    async def async_add_avoid_ingredient(self, ingredient: str) -> dict:
         """Ajoute un ingrédient à éviter (préférence, pas allergie)."""
         ing = ingredient.strip().lower()
         if ing and ing not in self.avoid_ingredients:
             self.avoid_ingredients.append(ing)
+            await self.async_save()
         return {"avoid_ingredients": self.avoid_ingredients}
 
-    def remove_avoid_ingredient(self, ingredient: str) -> dict:
+    async def async_remove_avoid_ingredient(self, ingredient: str) -> dict:
         """Retire un ingrédient à éviter."""
         ing = ingredient.strip().lower()
         self.avoid_ingredients = [e for e in self.avoid_ingredients if e != ing]
+        await self.async_save()
         return {"avoid_ingredients": self.avoid_ingredients}
 
-    def add_banned_ingredient(self, ingredient: str) -> dict:
+    async def async_add_banned_ingredient(self, ingredient: str) -> dict:
         """Ajoute un ingrédient interdit (allergie)."""
         ing = ingredient.strip().lower()
         if ing and ing not in self.banned_ingredients:
             self.banned_ingredients.append(ing)
+            await self.async_save()
         return {"banned_ingredients": self.banned_ingredients}
 
-    def remove_banned_ingredient(self, ingredient: str) -> dict:
+    async def async_remove_banned_ingredient(self, ingredient: str) -> dict:
         """Retire un ingrédient interdit."""
         ing = ingredient.strip().lower()
         self.banned_ingredients = [e for e in self.banned_ingredients if e != ing]
+        await self.async_save()
         return {"banned_ingredients": self.banned_ingredients}
 
     async def async_sync_calories(self, week_offset: int = 0) -> int:
@@ -932,11 +955,11 @@ class JowManager:
                 avant - len(recipes),
                 len(recipes),
             )
-        # Garder le nombre demandé
-        recipes = recipes[:limit]
 
         # Filtrer les recettes contenant des ingrédients interdits
-        # (allergies Jow + liste manuelle banned_ingredients)
+        # (allergies Jow + liste manuelle banned_ingredients) — AVANT le
+        # slicing, sinon on retire des recettes de la liste finale au lieu
+        # d'aller chercher les suivantes dans les résultats de recherche.
         banned = set()
         if self.jow_token:
             excluded = await self.async_get_excluded_ingredients()
@@ -964,6 +987,10 @@ class JowManager:
             if filtered and len(filtered) < len(recipes):
                 recipes = filtered
                 _LOGGER.info("Recettes filtrées (à éviter) : %d restantes", len(recipes))
+
+        # Garder le nombre demandé — APRÈS les filtres, pour piocher dans
+        # la profondeur des résultats plutôt que de renvoyer moins que limit.
+        recipes = recipes[:limit]
 
         # Si un jour de la semaine est fourni, planifier le premier résultat
         if weekday and weekday in WEEKDAYS and recipes:
