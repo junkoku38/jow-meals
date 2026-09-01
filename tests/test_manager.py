@@ -227,6 +227,32 @@ def test_suggest_ai_pick_reorders_results():
     assert res[0]["name"] == "Burger au tofu croustillant, sauce siracha"
 
 
+def test_diversify_intra_list_one_per_family_except_query():
+    """Une seule recette par famille dans la liste — sauf les mots-clés
+    de la requête : une demande « burger » a le droit à plusieurs burgers."""
+    burgers = [
+        {"id": "b1", "name": "Burger au poulet à la mexicaine"},
+        {"id": "b2", "name": "Burger au tofu croustillant"},
+        {"id": "b3", "name": "Smash burger"},
+    ]
+    # Sans query : b1 et b3 partagent « burger » → b3 écarté ; b2 aussi
+    out = JowManager._diversify_intra_list(burgers)
+    assert [r["id"] for r in out] == ["b1"]
+
+    # Requête « burger » : le mot-clé demandé ne compte pas comme famille
+    out = JowManager._diversify_intra_list(burgers, query="burger")
+    assert {r["id"] for r in out} == {"b1", "b2", "b3"}
+
+    # Deux dahls sans lien avec la requête → un seul
+    plats = [
+        {"id": "d1", "name": "Dahl de lentilles corail"},
+        {"id": "w1", "name": "Wok de nouilles"},
+        {"id": "d2", "name": "Dahl aux épinards"},
+    ]
+    out = JowManager._diversify_intra_list(plats, query="plat végétarien")
+    assert [r["id"] for r in out] == ["d1", "w1"]
+
+
 def test_ai_pick_prompt_is_enriched():
     """La liste fournie à l'IA contient ingrédients, temps et calories,
     et le prompt mentionne les plats récents à varier."""

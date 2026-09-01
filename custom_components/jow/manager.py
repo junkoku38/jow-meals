@@ -901,6 +901,54 @@ class JowManager:
                 return shared.pop()
         return None
 
+    def _recent_families(self) -> list[str]:
+        """Mots-clés forts communs aux plats récents (planifiés 4 semaines
+        + rejets), triés par fréquence — la famille dominante d'abord.
+        Ex: deux dahls récents -> ['dahl', …]. Sert à orienter la requête
+        IA loin de ces familles."""
+        from datetime import date as _date
+        from datetime import timedelta as _td
+
+        cutoff = (_date.today() - _td(weeks=4)).isoformat()
+        names = [
+            meal.get("name", "") for day_iso, meal in self.plan.items()
+            if meal and day_iso >= cutoff
+        ]
+        names += [r.get("name", "") for r in self.rejected[:_SIMILAR_WINDOW]]
+        freq: dict[str, int] = {}
+        for n in names:
+            for kw in self._title_keywords(n):
+                freq[kw] = freq.get(kw, 0) + 1
+        # Familles présentes chez au moins un plat récent ; les plus
+        # fréquentes d'abord (elles caractérisent la répétition perçue).
+        return [kw for kw, _ in sorted(freq.items(), key=lambda kv: -kv[1])]
+
+    @classmethod
+    def _diversify_intra_list(cls, recipes: list[dict], query: str = "") -> list[dict]:
+        """Une seule recette par famille (mot-clé fort) dans la liste :
+
+        « Dahl de lentilles » et « Dahl aux épinards » ne doivent pas
+        sortir ensemble dans les suggestions — l'utilisateur en choisit
+        une, l'autre est du bruit de même goût. La première de chaque
+        famille est conservée (ordre du pipeline), les suivantes sautées.
+
+        EXCEPTION : les mots-clés de la REQUÊTE ne comptent pas comme
+        familles — si l'utilisateur demande des burgers, toute la liste
+        peut être de burgers ; c'est la diversité par rapport à ses plats
+        récents (gérée en amont) qui compte, pas celle qu'il a demandée.
+        """
+        query_kw = set(cls._query_keywords(query)) if query else set()
+        seen_families: set[str] = set()
+        out = []
+        for r in recipes:
+            kws = cls._title_keywords(r.get("name", "")) - query_kw
+            fam = next((k for k in kws if k in seen_families), None)
+            if fam:
+                continue
+            seen_families.update(kws)
+            out.append(r)
+        return out
+
     @classmethod
     def _rerank_on_query(cls, recipes: list[dict], query: str) -> list[dict]:
         """Re-trie les recettes selon la correspondance titre/description
@@ -1236,8 +1284,22 @@ class JowManager:
         for day_iso, meal in self.plan.items():
             if meal and meal.get("name") and day_iso >= cutoff:
                 recent_names.append(meal["name"])
+        # Inclure les rejets (effacés sans être mangés) dans la fenêtre
+        # de variation : l'IA ne doit pas générer une requête « dahl »
+        # juste après que l'utilisateur a refusé deux dahls.
+        recent_names.extend(r.get("name", "") for r in self.rejected[:_SIMILAR_WINDOW] if r.get("name"))
         if recent_names:
             constraints += f"Évite ces plats déjà faits récemment : {', '.join(recent_names[:8])}. Propose quelque chose de différent. "
+        # Familles récentes explicites : plus fort que la liste de plats,
+        # l'IA comprend qu'elle ne doit même pas chercher dans cette
+        # famille (sinon tout le résultat Jow est de la même famille et
+        # la diversité en aval n'a plus de marge de manœuvre).
+        familles = self._recent_families()
+        if familles:
+            constraints += (
+                f"Varie vraiment : pas de recette de type {', '.join(familles[:6])} "
+                "ni de plat trop proche. "
+            )
 
         instructions = (
             f"{weather_ctx}{constraints}"
@@ -1428,6 +1490,13 @@ class JowManager:
             if filtered and len(filtered) < len(recipes):
                 recipes = filtered
                 _LOGGER.info("Recettes filtrées (à éviter) : %d restantes", len(recipes))
+
+        # Diversité intra-liste : une seule recette par famille (mot-clé
+        # fort) dans ce qui va être renvoyé/planifié — « Dahl de lentilles »
+        # et « Dahl aux épinards » ne doivent pas coexister dans la même
+        # liste de suggestions. AVANT le slicing pour laisser la place aux
+        # familles suivantes dans la profondeur des résultats.
+        recipes = self._diversify_intra_list(recipes, query=query)
 
         # Garder le nombre demandé — APRÈS les filtres, pour piocher dans
         # la profondeur des résultats plutôt que de renvoyer moins que limit.
