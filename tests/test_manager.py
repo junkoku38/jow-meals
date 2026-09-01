@@ -190,6 +190,43 @@ def test_suggest_overwrite_semantics():
     assert res and res[0]["id"] == "r2"
 
 
+def test_suggest_ai_pick_reorders_results():
+    """La sélection IA (_ai_pick_recipe) remonte la recette choisie
+    en tête de la liste, en tête de planification."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = "ai_task.dummy"
+    m.plan = {}
+    import asyncio
+
+    # 3 candidates : l'API renvoie mexicain en tête, l'IA doit choisir
+    # le burger tofu (n°3, plus proche d'une demande « asiatique »).
+    api_recipes = [
+        {"id": "r1", "title": "Burger au poulet à la mexicaine"},
+        {"id": "r2", "title": "Smash burger"},
+        {"id": "r3", "title": "Burger au tofu croustillant, sauce siracha"},
+    ]
+
+    async def fake_search(q, limit=5, start=0):
+        return list(api_recipes)
+
+    async def fake_calories(rid):
+        return None
+
+    async def fake_ai_generate(instructions, ai_ent, task_name="jow_recipe_suggest"):
+        if task_name == "jow_recipe_pick":
+            return "3"  # l'IA choisit le burger tofu
+        return "burger asiatique"  # requête générée
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+    m._ai_generate = fake_ai_generate
+
+    res = asyncio.run(m.async_suggest(criteria="burger asiatique", limit=3))
+    assert res and res[0]["id"] == "r3"
+    assert res[0]["name"] == "Burger au tofu croustillant, sauce siracha"
+
+
 # ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------

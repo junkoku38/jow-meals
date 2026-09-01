@@ -131,9 +131,12 @@ search:
 suggest:
   name: Suggérer des recettes par IA
   description: >-
-    Génère une requête de recherche adaptée aux allergies, préférences et
-    météo via un agent ai_task, puis renvoie les recettes Jow correspondantes.
-    Si weekday est fourni, planifie automatiquement le premier résultat sur ce jour.
+    Pipeline complet : 1) l'agent ia_task formule une requête de recherche
+    adaptée (allergies, préférences, météo), 2) Jow est interrogé sur 100
+    résultats, 3) filtres (interdits, anti-répétition) et re-ranking
+    lexical, 4) l'agent ia_task choisit la recette la plus adaptée à la
+    demande parmi les candidates. Si weekday est fourni, planifie
+    automatiquement le résultat choisi sur ce jour.
   fields:
     criteria:
       name: Demande

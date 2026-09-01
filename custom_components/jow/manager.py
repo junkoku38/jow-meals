@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import copy
 from datetime import date, timedelta
@@ -972,6 +973,94 @@ class JowManager:
     # ------------------------------------------------------------------
     # Suggestion IA (ai_task.generate_data + jow.search)
     # ------------------------------------------------------------------
+    async def _ai_generate(self, instructions: str, ai_ent: str, task_name: str = "jow_recipe_suggest") -> str:
+        """Appelle ai_task.generate_data et retourne la réponse texte.
+
+        Timeout explicite : un agent IA qui pend ne doit pas bloquer le
+        service (et l'automatisation appelante) indéfiniment —
+        blocking=True sans limite attendrait la réponse pour toujours.
+        Retourne "" en cas d'échec (l'appelant retombe sur ses pieds).
+        """
+        try:
+            response = await asyncio.wait_for(
+                self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    {
+                        "task_name": task_name,
+                        "instructions": instructions,
+                        "entity_id": ai_ent,
+                    },
+                    blocking=True,
+                    return_response=True,
+                ),
+                timeout=60,
+            )
+            # Selon la version HA, response peut être:
+            # {"conversation_id": ..., "data": "..."}  (via WS)
+            # ou {"ai_task.xxx": {"data": "..."}}  (via async_call interne)
+            data = ""
+            if isinstance(response, dict):
+                data = response.get("data")
+                if not data:
+                    data = response.get("response", {}).get("data", "")
+                if not data:
+                    for _k, val in response.items():
+                        if isinstance(val, dict) and "data" in val:
+                            data = val["data"]
+                            break
+            elif isinstance(response, str):
+                data = response
+            return str(data or "").strip().strip('"').strip("'")
+        except Exception as err:
+            _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
+            return ""
+
+    async def _ai_pick_recipe(self, criteria: str, recipes: list[dict], ai_ent: str) -> dict | None:
+        """Demande à l'agent IA de choisir la recette la plus adaptée.
+
+        L'IA reçoit la demande utilisateur et la liste (titre + description,
+        max 30) des recettes filtrées, et retourne le numéro de la meilleure.
+        Retourne None en cas d'échec (l'appelant garde l'ordre du re-ranking).
+        """
+        if not recipes or not ai_ent:
+            return None
+        # 30 max : au-delà la liste devient bruitée pour l'agent et le
+        # prompt explose en tokens.
+        candidates = recipes[:30]
+        listing = "\n".join(
+            f"{i + 1}. {r.get('name', '')} — {(r.get('description') or '')[:100]}"
+            for i, r in enumerate(candidates)
+        )
+        instructions = (
+            f"Un utilisateur demande : « {criteria or 'un bon repas'} ». "
+            f"{f'Préférences : {self.preferences}. ' if self.preferences else ''}"
+            "Voici les recettes disponibles :\n"
+            f"{listing}\n\n"
+            "Choisis LA recette qui correspond le mieux à la demande "
+            "(style de cuisine, ingrédients, type de plat — un plat "
+            "approchant vaut mieux qu'un plat hors-sujet, même parfait). "
+            "Réponds uniquement avec le numéro de la recette."
+        )
+        answer = await self._ai_generate(instructions, ai_ent, task_name="jow_recipe_pick")
+        if not answer:
+            return None
+        match = re.search(r"\d+", answer)
+        if not match:
+            return None
+        idx = int(match.group()) - 1
+        if 0 <= idx < len(candidates):
+            picked = candidates[idx]
+            _LOGGER.info(
+                "Sélection IA : « %s » (n°%d) pour la demande « %s »",
+                picked.get("name", ""),
+                idx + 1,
+                criteria,
+            )
+            return picked
+        _LOGGER.warning("Sélection IA : numéro invalide « %s », ordre conservé", answer)
+        return None
+
     async def async_suggest(
         self,
         criteria: str = "",
@@ -1067,44 +1156,9 @@ class JowManager:
             )
 
         if ai_ent:
-            try:
-                # Timeout explicite : un agent IA qui pend ne doit pas
-                # bloquer le service (et l'automatisation appelante)
-                # indéfiniment — blocking=True sans limite attendrait
-                # la réponse pour toujours.
-                import asyncio as _asyncio
-                response = await _asyncio.wait_for(
-                    self.hass.services.async_call(
-                        "ai_task",
-                        "generate_data",
-                        {
-                            "task_name": "jow_recipe_suggest",
-                            "instructions": instructions,
-                            "entity_id": ai_ent,
-                        },
-                        blocking=True,
-                        return_response=True,
-                    ),
-                    timeout=60,
-                )
-                # Selon la version HA, response peut être:
-                # {"conversation_id": ..., "data": "..."}  (via WS)
-                # ou {"ai_task.xxx": {"data": "..."}}  (via async_call interne)
-                if isinstance(response, dict):
-                    data = response.get("data")
-                    if not data:
-                        data = response.get("response", {}).get("data", "")
-                    if not data:
-                        for _k, val in response.items():
-                            if isinstance(val, dict) and "data" in val:
-                                data = val["data"]
-                                break
-                    query = str(data or "").strip().strip('"').strip("'")
-                elif isinstance(response, str):
-                    query = response.strip().strip('"').strip("'")
-            except Exception as err:
-                _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
-                query = ""
+            query = await self._ai_generate(instructions, ai_ent)
+            if not query:
+                _LOGGER.warning("ai_task.generate_data a échoué (réponse vide)")
 
         # Fallback : utiliser criteria directement ou extraire les mots-clés
         if not query:
@@ -1192,6 +1246,17 @@ class JowManager:
         # Garder le nombre demandé — APRÈS les filtres, pour piocher dans
         # la profondeur des résultats plutôt que de renvoyer moins que limit.
         recipes = recipes[:limit]
+
+        # Sélection IA : l'agent relit la demande utilisateur et choisit
+        # la recette la plus adaptée parmi les candidates filtrées (le
+        # re-ranking lexical ne comprend pas que « tofu croustillant
+        # sauce siracha » est plus proche d'un burger asiatique demandé
+        # qu'un burger mexicain). En cas d'échec IA, ordre conservé.
+        if ai_ent and len(recipes) > 1 and criteria:
+            picked = await self._ai_pick_recipe(criteria, recipes, ai_ent)
+            if picked is not None and picked in recipes:
+                recipes.remove(picked)
+                recipes.insert(0, picked)
 
         # Si un jour de la semaine est fourni, planifier le premier résultat.
         # Par défaut on écrase le repas existant : le scénario nominal de
