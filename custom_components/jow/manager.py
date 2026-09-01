@@ -268,7 +268,14 @@ def _recipe_to_dict(recipe: Any, covers: int) -> dict:
     ingredients = []
     for const in recipe.get("constituents", []) or []:
         ing = const.get("ingredient", {})
+        # quantityPerCover vit à DEUX endroits selon l'endpoint :
+        # - recherche (quicksearch) : constituant.ingredient.quantityPerCover
+        # - détail (/recipe/{id})   : constituant.quantityPerCover
+        # Les favoris/suggestions épinglés par recipe_id passent par le
+        # détail — ne lire que le premier emplacement perdait les quantités.
         qty_per_cover = ing.get("quantityPerCover")
+        if qty_per_cover is None:
+            qty_per_cover = const.get("quantityPerCover")
         try:
             qty_per_cover = float(qty_per_cover) if qty_per_cover else None
         except (TypeError, ValueError):

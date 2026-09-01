@@ -306,6 +306,32 @@ def test_shelf_life_lookup():
     assert JowManager._shelf_life("") is None
 
 
+def test_recipe_to_dict_detail_endpoint_quantities():
+    """Régression 0.10.0 : l'endpoint DÉTAIL (/recipe/{id}) porte
+    quantityPerCover sur le CONSTITUANT (pas dans constituent.ingredient
+    comme la recherche) — les favoris épinglés par recipe_id perdaient
+    toutes leurs quantités."""
+    detail_recipe = {
+        "id": "r1", "title": "Bouillon de gnocchi",
+        "roundedCoversCount": 2,
+        "constituents": [
+            # format DÉTAIL : qty sur le constituant
+            {"isOptional": False, "quantityPerCover": 0.1,
+             "unit": {"id": "u1", "name": "Kilogramme"},
+             "ingredient": {"id": "i1", "name": "Gnocchi", "naturalUnit": {"id": "u1", "name": "Kilogramme"}}},
+            # format RECHERCHE : qty dans l'ingrédient
+            {"isOptional": False,
+             "unit": {"id": "u2", "name": "Pièce"},
+             "ingredient": {"id": "i2", "name": "Oignon", "quantityPerCover": 1.5,
+                            "naturalUnit": {"id": "u2", "name": "Pièce"}}},
+        ],
+    }
+    r = _recipe_to_dict(detail_recipe, 4)   # 4 couverts, base 2 => ratio 2
+    assert r["ingredients"][0]["quantity"] == 0.2   # 0.1 × 2 (détail : qty sur le constituant)
+    assert r["ingredients"][1]["quantity"] == 3.0   # 1.5 × 2 (recherche : qty dans l'ingrédient)
+    assert r["ingredients"][0]["unit"] == "Kilogramme"
+
+
 def test_expiring_ingredients_from_planning():
     """Les ingrédients périssables des repas planifiés ressortent avec
     leur urgence ; les longues conservations (pâtes) n'apparaissent pas."""
