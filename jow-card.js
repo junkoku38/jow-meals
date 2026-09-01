@@ -8,7 +8,10 @@
  *   title: Menu de la semaine (optionnel)
  *   show_images: true (optionnel, défaut true)
  *   show_ingredients: false (optionnel, défaut false)
- *   today_entity: sensor.jow_repas_du_jour (optionnel)
+ *   today_entity: sensor.jow_repas_du_jour (optionnel, bandeau du jour)
+ *   entity_prefix: sensor.jow_ (optionnel, multi-instance)
+ *   entry_name: nom de l'instance Jow (optionnel, multi-instance)
+ *   covers: 2 (optionnel, couverts par défaut pour "Planifier")
  */
 
 class JowCard extends HTMLElement {
@@ -17,7 +20,6 @@ class JowCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._hass = null;
     this._config = {};
-    this._recipes = [];
   }
 
   setConfig(config) {
@@ -53,9 +55,22 @@ class JowCard extends HTMLElement {
     return ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"];
   }
 
+  _escapeHtml(text) {
+    return String(text ?? "").replace(/[&<>"']/g, (c) => {
+      switch (c) {
+        case "&": return "&amp;";
+        case "<": return "&lt;";
+        case ">": return "&gt;";
+        case '"': return "&quot;";
+        default: return "&#39;";
+      }
+    });
+  }
+
   _getMeal(day) {
     if (!this._hass) return null;
-    const entity = `sensor.jow_${day}`;
+    const prefix = this._config.entity_prefix || "sensor.jow_";
+    const entity = `${prefix}${day}`;
     const state = this._hass.states[entity];
     if (!state || !state.attributes || !state.attributes.planned) return null;
     return state;
@@ -69,11 +84,28 @@ class JowCard extends HTMLElement {
     return state;
   }
 
+  _renderTodaySection() {
+    const meal = this._getTodayMeal();
+    if (!meal) return "";
+    const attrs = meal.attributes;
+    const name = this._escapeHtml(meal.state || "Recette");
+    const url = this._escapeHtml(attrs.url || "");
+    const image = this._escapeHtml(attrs.image || "");
+    let html = `<div class="day-row today">`;
+    if (this._config.show_images && image) {
+      html += `<img class="meal-image" src="${image}" alt="${name}" onerror="this.style.display='none'"/>`;
+    }
+    html += `<div class="meal-content"><div class="meal-name">`;
+    html += url ? `<a href="${url}" target="_blank" rel="noopener">${name}</a>` : name;
+    html += `</div></div></div>`;
+    return html;
+  }
+
   _formatIngredients(ingredients) {
     if (!ingredients || !ingredients.length) return "";
     return ingredients
       .map((ing) => {
-        const qty = ing.quantity ? `${ing.quantity} ${ing.unit || ""} ` : "";
+        const qty = ing.quantity != null && ing.quantity !== "" ? `${ing.quantity} ${ing.unit || ""} ` : "";
         return `• ${qty}${ing.name}`;
       })
       .join("\n");
@@ -81,7 +113,11 @@ class JowCard extends HTMLElement {
 
   _callService(domain, service, data) {
     if (!this._hass) return;
-    this._hass.callService(domain, service, data);
+    const payload = { ...data };
+    if (this._config.entry_name) {
+      payload.entry_name = this._config.entry_name;
+    }
+    this._hass.callService(domain, service, payload);
   }
 
   _planMeal(day) {
@@ -90,7 +126,7 @@ class JowCard extends HTMLElement {
     this._callService("jow", "plan_meal", {
       query: query,
       weekday: day,
-      covers: 2,
+      covers: this._config.covers || 2,
     });
   }
 
@@ -260,9 +296,10 @@ class JowCard extends HTMLElement {
       </style>
       <ha-card class="card">
         <div class="header">
-          <div class="title">${this._config.title}</div>
+          <div class="title">${this._escapeHtml(this._config.title)}</div>
           <button class="refresh-btn" title="Rafraîchir la liste de courses" onclick="this.getRootNode().host._refreshShopping()">🛒</button>
         </div>
+        ${this._renderTodaySection()}
     `;
 
     for (const day of days) {
@@ -277,9 +314,9 @@ class JowCard extends HTMLElement {
       // Meal content
       if (meal) {
         const attrs = meal.attributes;
-        const name = meal.state || "Recette";
-        const url = attrs.url || "";
-        const image = attrs.image || "";
+        const name = this._escapeHtml(meal.state || "Recette");
+        const url = this._escapeHtml(attrs.url || "");
+        const image = this._escapeHtml(attrs.image || "");
         const prep = attrs.preparation_time;
         const cook = attrs.cooking_time;
         const covers = attrs.covers;
@@ -308,7 +345,7 @@ class JowCard extends HTMLElement {
         }
 
         if (showIngredients && attrs.ingredients) {
-          const ing = this._formatIngredients(attrs.ingredients);
+          const ing = this._escapeHtml(this._formatIngredients(attrs.ingredients));
           if (ing) html += `<div class="ingredients">${ing}</div>`;
         }
 
@@ -351,4 +388,4 @@ window.customCards.push({
   preview: false,
 });
 
-console.info("%c JOW-CARD %c v1.0.0 ", "background:#ff8c32;color:#fff;border-radius:3px 0 0 3px;padding:2px 6px", "background:#333;color:#aaa;border-radius:0 3px 3px 0;padding:2px 6px");
+console.info("%c JOW-CARD %c v0.9.0 ", "background:#ff8c32;color:#fff;border-radius:3px 0 0 3px;padding:2px 6px", "background:#333;color:#aaa;border-radius:0 3px 3px 0;padding:2px 6px");

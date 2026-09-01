@@ -245,10 +245,13 @@ actions:
       ai_entity: ai_task.ollama_ai_task
     response_variable: jow_suggestions
   # Optionnel : épingler la première suggestion sur le jour courant
+  # (WEEKDAYS attend un jour en français : lundi, mardi, …)
   - action: jow.plan_meal
     data:
       query: "{{ jow_suggestions.recipes[0].name }}"
-      weekday: "{{ now().strftime('%A') | lower }}"
+      weekday: >
+        {{ ["lundi", "mardi", "mercredi", "jeudi", "vendredi",
+            "samedi", "dimanche"][now().weekday()] }}
 ```
 
 ## Carte UI de planification

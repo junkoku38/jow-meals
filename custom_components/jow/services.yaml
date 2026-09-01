@@ -62,6 +62,11 @@ clear_meal:
         number:
           min: -4
           max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 clear_week:
   name: Effacer la semaine
@@ -72,6 +77,11 @@ clear_week:
         number:
           min: -4
           max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 refresh_shopping_list:
   name: Régénérer la liste de courses
@@ -87,6 +97,11 @@ refresh_shopping_list:
       default: true
       selector:
         boolean:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 search:
   name: Rechercher une recette
@@ -107,6 +122,11 @@ search:
         number:
           min: 1
           max: 12
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 suggest:
   name: Suggérer des recettes par IA
@@ -118,6 +138,18 @@ suggest:
     criteria:
       name: Demande
       description: Demande libre (ex. "plat frais pour canicule", "dîner léger").
+      selector:
+        text:
+    ai_prompt:
+      name: Invite IA
+      description: >-
+        Surcharge partielle ou totale de l'invite envoyée à l'agent IA
+        (avancé — laisser vide pour l'invite par défaut).
+      selector:
+        text:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
       selector:
         text:
     weekday:
@@ -163,16 +195,34 @@ suggest:
 sync_profile:
   name: Synchroniser le profil Jow
   description: Récupère le profil du compte Jow connecté (nom, email, foyer, habitudes).
+  fields:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 sync_favorites:
   name: Synchroniser les favoris Jow
   description: Récupère les recettes favorites du compte Jow connecté.
+  fields:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 sync_preferences:
   name: Synchroniser les préférences Jow
   description: >-
     Récupère les habitudes alimentaires et ingrédients exclus depuis le compte
     Jow et les utilise pour filtrer les suggestions de recettes.
+  fields:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 meal_done:
   name: Marquer un repas comme fait
@@ -196,6 +246,11 @@ meal_done:
         number:
           min: -4
           max: 4
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 sync_calories:
   name: Synchroniser les calories
@@ -210,6 +265,11 @@ sync_calories:
         number:
           min: -4
           max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 send_menu:
   name: Envoyer le menu à Jow
@@ -225,6 +285,11 @@ send_menu:
         number:
           min: -4
           max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 copy_meal:
   name: Copier un repas
@@ -281,6 +346,11 @@ copy_meal:
         number:
           min: -4
           max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 set_covers:
   name: Changer les couverts
@@ -319,6 +389,11 @@ set_covers:
         number:
           min: 1
           max: 20
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
 
 exclude_ingredient:
   name: Retirer un ingrédient (en stock)
@@ -327,7 +402,101 @@ exclude_ingredient:
   fields:
     ingredient:
       name: Ingrédient
-      description: Nom de l'ingrédient à retirer (ex : "riz", "tomate").
+      description: 'Nom de l''ingrédient à retirer (ex : "riz", "tomate").'
       required: true
+      selector:
+        text:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+get_context:
+  name: Contexte Jow (pour agents IA)
+  description: >-
+    Renvoie le contexte complet de l'intégration (planning, liste de courses,
+    allergies, préférences, historique) au format texte, utile pour alimenter
+    un agent conversationnel.
+  fields:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+clear_recent:
+  name: Effacer l'anti-répétition d'un repas
+  description: >-
+    Retire un repas de l'historique d'anti-répétition pour pouvoir le
+    replanifier immédiatement.
+  fields:
+    weekday:
+      name: Jour de la semaine
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    date:
+      name: Date exacte
+      selector:
+        date: {}
+    week_offset:
+      name: Décalage de semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+add_avoid:
+  name: Ajouter un ingrédient à éviter
+  description: >-
+    Ajoute un ingrédient à la liste des ingrédients à éviter (pris en compte
+    dans les suggestions et recherches).
+  fields:
+    ingredient:
+      name: Ingrédient
+      required: true
+      selector:
+        text:
+    action:
+      name: Action
+      description: add = ajouter à la liste, remove = retirer de la liste.
+      default: add
+      selector:
+        select:
+          options: [add, remove]
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+add_banned:
+  name: Bannir un ingrédient
+  description: >-
+    Ajoute un ingrédient à la liste noire : toute recette le contenant est
+    exclue des résultats de recherche.
+  fields:
+    ingredient:
+      name: Ingrédient
+      required: true
+      selector:
+        text:
+    action:
+      name: Action
+      description: add = ajouter à la liste noire, remove = retirer de la liste noire.
+      default: add
+      selector:
+        select:
+          options: [add, remove]
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
       selector:
         text:

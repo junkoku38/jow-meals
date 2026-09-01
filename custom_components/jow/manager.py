@@ -366,7 +366,9 @@ class JowManager:
         self.ai_entity = ai_entity
         self.weather_entity = weather_entity
         self.jow_token = jow_token
-        self.jow_refresh_token = jow_refresh_token or jow_token  # fallback
+        # Un access token (48h) n'est pas un refresh token (~6 mois) :
+        # pas de fallback, sinon /auth/refresh échoue inutilement.
+        self.jow_refresh_token = jow_refresh_token
         self._token_refresh_cancel: Any = None
         # Clé de stockage unique par instance pour éviter l'écrasement
         # mutuel en multi-instance.
@@ -528,7 +530,11 @@ class JowManager:
         meal = self.get_meal(from_day)
         if not meal:
             return None
-        self.plan[to_day.isoformat()] = meal
+        # Copie profonde : évite que modifier un jour (set_covers, etc.)
+        # modifie aussi l'autre par effet d'aliasing.
+        import copy
+
+        self.plan[to_day.isoformat()] = copy.deepcopy(meal)
         await self.async_save()
         async_dispatcher_send(self.hass, SIGNAL_UPDATE)
         return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
@@ -553,14 +559,23 @@ class JowManager:
         return {"covers": covers, "day": day.isoformat()}
 
     async def async_exclude_ingredient(self, ingredient: str) -> dict:
-        """Retire un ingrédient de la liste de courses (déjà en stock)."""
+        """Retire un ingrédient de la liste de courses (déjà en stock).
+
+        Matching par nom d'ingrédient complet (après retrait de la
+        quantité/Unité) pour éviter les faux positifs (ex: "ail" ne doit
+        pas retirer "aileron").
+        """
         norm = self._norm(ingredient)
         removed = []
         kept = []
         for item in self.shopping:
-            item_norm = self._norm(item["summary"])
-            item_name = item_norm.split(" de ", 1)[1] if " de " in item_norm else item_norm
-            if norm in item_name or norm in item_norm:
+            summary_norm = self._norm(item["summary"])
+            item_name = summary_norm
+            if " de " in item_name:
+                item_name = item_name.split(" de ", 1)[1]
+            else:
+                item_name = self._strip_quantity(item_name)
+            if norm in (item_name, summary_norm):
                 removed.append(item["summary"])
             else:
                 kept.append(item)
@@ -645,11 +660,14 @@ class JowManager:
             self.plan.pop(day.isoformat(), None)
         await self.async_save()
 
-    def purge_old(self, keep_days: int = 30) -> None:
-        """Supprime les repas trop anciens pour ne pas gonfler le stockage."""
+    async def async_purge_old(self, keep_days: int = 30) -> None:
+        """Supprime les repas trop anciens et persiste le résultat."""
         limit = (date.today() - timedelta(days=keep_days)).isoformat()
-        for key in [k for k in self.plan if k < limit]:
+        old = [k for k in self.plan if k < limit]
+        for key in old:
             self.plan.pop(key, None)
+        if old:
+            await self.async_save()
 
     # ------------------------------------------------------------------
     # Liste de courses
@@ -743,6 +761,18 @@ class JowManager:
         """Normalise un libellé pour comparer (minuscules, espaces)."""
         return " ".join(text.lower().split())
 
+    _QTY_PREFIX = re.compile(
+        r"^\d+(?:[.,]\d+)?\s*(?:[a-zA-Zéèêëàâäîïôöûüç%.]+(?:\s+de)?\s+)?"
+    )
+
+    @classmethod
+    def _strip_quantity(cls, text: str) -> str:
+        """Retire la quantité/Unité de tête d'un libellé normalisé.
+
+        "200 g riz" -> "riz", "1,5 l de lait" -> "lait", "riz" -> "riz".
+        """
+        return cls._QTY_PREFIX.sub("", text).strip() or text
+
     def _sort_by_aisle(self, lines: list[str]) -> list[str]:
         """Trie la liste de courses par rayon (Fruits & Légumes, Boucherie, etc.)."""
         return sorted(lines, key=lambda l: (_AISLE_ORDER.index(_aisle_for(l)), l.lower()))
@@ -825,17 +855,22 @@ class JowManager:
         }
 
         # Retirer les items de la liste de courses correspondant aux ingrédients
-        # du repas terminé. Le summary de shopping est au format "200 g de riz" :
-        # on extrait le nom de l'ingrédient (après " de ") et on compare
-        # normalisé pour éviter les faux positifs (ex: "ail" dans "aileron").
+        # du repas terminé. Le summary de shopping est au format "200 g riz"
+        # (ou "200 g de riz" / "3 botte de basilic") : on extrait le nom de
+        # l'ingrédient en retirant la quantité et l'unité de tête, puis on
+        # compare normalisé pour éviter les faux positifs (ex: "ail" dans
+        # "aileron").
         removed = []
         kept = []
         for item in self.shopping:
             summary_norm = self._norm(item["summary"])
-            # Extraction du nom d'ingrédient : "200 g de riz" -> "riz"
+            # Extraction du nom d'ingrédient : "200 g de riz" -> "riz",
+            # "200 g riz" -> "riz", "riz" -> "riz"
             item_name = summary_norm
             if " de " in item_name:
                 item_name = item_name.split(" de ", 1)[1]
+            else:
+                item_name = self._strip_quantity(item_name)
             if item_name in done_ingredients or summary_norm in done_ingredients:
                 removed.append(item["summary"])
             else:
@@ -1398,7 +1433,7 @@ class JowManager:
 
     async def _async_purge_callback(self, now=None) -> None:
         """Purge périodique du planning (repas de plus de 30 jours)."""
-        self.purge_old()
+        await self.async_purge_old()
 
     async def _async_check_token_callback(self, now=None) -> None:
         """Rafraîchit périodiquement le token Jow.
@@ -1437,11 +1472,15 @@ class JowManager:
             await self._async_persist_tokens()
 
     async def async_check_token_validity(self) -> bool:
-        """Vérifie si le token Jow est encore valide."""
+        """Vérifie si le token Jow est encore valide.
+
+        Un profil vide (data: {}) est un compte valide : seul un échec
+        HTTP (401/403…) signifie un token expiré.
+        """
         if not self.jow_token:
             return False
         profile = await self.async_get_jow_profile()
-        if profile:
+        if profile is not None:
             return True
         _LOGGER.warning("Token Jow expiré ou invalide")
         return False

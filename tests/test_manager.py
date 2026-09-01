@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 import types
 from datetime import date, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 
 def _stub_homeassistant() -> None:
@@ -78,7 +78,9 @@ aisle = _mod._aisle_for
 
 
 def _manager() -> JowManager:
-    return JowManager(MagicMock(), 2, entry_id="test")
+    m = JowManager(MagicMock(), 2, entry_id="test")
+    m.async_save = AsyncMock(return_value=None)
+    return m
 
 
 # ---------------------------------------------------------------------------
@@ -269,18 +271,36 @@ def test_jow_ingredient_unit():
 
 def test_add_remove_banned_normalizes_and_dedupes():
     m = _manager()
-    m.async_save = lambda: types.coroutine(lambda: None)()  # no-op async
     import asyncio
 
     m.banned_ingredients = []
     m.avoid_ingredients = []
 
+    asyncio.run(m.async_add_banned_ingredient("  CÉLERI "))
+    assert m.banned_ingredients == ["céleri"]
+    # doublon (déjà présent, normalisé) : pas d'ajout
+    asyncio.run(m.async_add_banned_ingredient("céleri"))
+    assert m.banned_ingredients == ["céleri"]
+    # chaîne vide ignorée
+    asyncio.run(m.async_add_banned_ingredient("   "))
+    assert m.banned_ingredients == ["céleri"]
+    # retrait
+    asyncio.run(m.async_remove_banned_ingredient("CÉLERI"))
+    assert m.banned_ingredients == []
+
+    asyncio.run(m.async_add_avoid_ingredient(" Coriandre "))
+    assert m.avoid_ingredients == ["coriandre"]
+    asyncio.run(m.async_remove_avoid_ingredient("coriandre"))
+    assert m.avoid_ingredients == []
+
 
 def test_purge_old():
     m = _manager()
+    import asyncio
+
     old = (date.today() - timedelta(days=40)).isoformat()
     recent = (date.today() - timedelta(days=3)).isoformat()
     m.plan = {old: {"name": "vieux"}, recent: {"name": "récent"}}
-    m.purge_old()
+    asyncio.run(m.async_purge_old())
     assert old not in m.plan
     assert recent in m.plan

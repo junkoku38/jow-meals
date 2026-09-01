@@ -115,7 +115,12 @@ def _resolve_to_date(manager: JowManager, call: ServiceCall) -> date:
             _LOGGER.warning("Date invalide reçue « %s », utilisation d'aujourd'hui", raw)
             return date.today()
     weekday = call.data.get(ATTR_TO_WEEKDAY)
-    offset = call.data.get(ATTR_TO_WEEK_OFFSET, call.data.get(ATTR_WEEK_OFFSET, 0))
+    # week_offset accepté comme alias de to_week_offset (le schema de
+    # copy_meal injecte un default pour to_week_offset, donc la fallback
+    # classique ne s'applique jamais : on compare explicitement).
+    offset = call.data.get(ATTR_TO_WEEK_OFFSET)
+    if offset is None:
+        offset = call.data.get(ATTR_WEEK_OFFSET, 0)
     if weekday:
         return manager.week_dates(offset)[WEEKDAYS.index(weekday)]
     return date.today()
@@ -141,7 +146,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry_id=entry.entry_id,
     )
     await manager.async_load()
-    manager.purge_old()
+    await manager.async_purge_old()
     # Purge hebdomadaire du planning (indépendante du token Jow)
     manager.async_start_purge()
     # Si on a un refresh token mais pas d'access token valide, on en
@@ -480,6 +485,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({
             vol.Required("ingredient"): cv.string,
             vol.Optional("action", default="add"): vol.In(["add", "remove"]),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -488,6 +494,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({
             vol.Required("ingredient"): cv.string,
             vol.Optional("action", default="add"): vol.In(["add", "remove"]),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
