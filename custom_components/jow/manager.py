@@ -2035,22 +2035,45 @@ class JowManager:
         return sent
 
     async def async_import_menu_from_jow(self, week_offset: int = 0) -> dict:
-        """Importe le menu de la semaine depuis le compte Jow (menu/week).
+        """Importe le menu du compte Jow (plats ajoutés sur jow.fr/l'app).
 
-        Sens Jow → HA de la synchro bidirectionnelle : les plats ajoutés
-        depuis l'app/mobile jow.fr atterrissent dans le planning HA.
+        Sens Jow → HA de la synchro bidirectionnelle.
 
-        L'endpoint est capricieux (500 observé sur des comptes dont le
-        menu serveur est dans un état inattendu) : parsing défensif,
-        aucune exception ne remonte — un rapport structuré est retourné.
+        Source : GET /profile/letscook → data.openShoppingList.meals (+
+        pendingMenu en secours) — c'est la route que le site utilise pour
+        remonter les recettes ajoutées au menu ; l'endpoint /menu reste
+        tenté en premier mais il est instable (500 observé sur des menus
+        serveur en état inattendu) — parsing défensif, aucune exception
+        ne remonte, un rapport structuré est retourné.
+
+        Les repas importés n'ont pas de date Jow (la liste ouverte est
+        un panier de recettes) : ils remplissent les jours vides de la
+        semaine visée, dans l'ordre de la liste.
         """
+        if not self.jow_token:
+            return {"imported": 0, "error": "token_jow_absent"}
+
+        # 1) endpoint /menu (historique) — souvent 500, on tente puis on replie
         resp = await self._async_jow_get(
             JOW_MENU_URL, params={"availabilityZoneId": "FR"}
         )
+        if resp is not None and resp.status_code == 200:
+            try:
+                data = resp.json().get("data", {})
+                result = self._import_from_menu_data(data, week_offset)
+                if result["imported"]:
+                    await self.async_save()
+                    return result
+            except ValueError:
+                pass  # réponse illisible : on replie sur letscook
+
+        # 2) source de repli : profile/letscook (route du site, stable)
+        resp = await self._async_jow_get(
+            "https://api.jow.fr/public/profile/letscook",
+            params={"availabilityZoneId": "FR", "nbMeals": 14},
+        )
         if resp is None:
             return {"imported": 0, "error": "token_jow_absent"}
-        if resp.status_code == 204:
-            return {"imported": 0, "error": None, "note": "menu_jow_vide"}
         if resp.status_code != 200:
             return {"imported": 0, "error": f"http_{resp.status_code}"}
         try:
@@ -2058,10 +2081,46 @@ class JowManager:
         except ValueError:
             return {"imported": 0, "error": "reponse_illisible"}
 
-        result = self._import_from_menu_data(data, week_offset)
-        if result["imported"]:
+        meals = []
+        if isinstance(data, dict):
+            # liste ouverte : les recettes ajoutées au menu (non encore cuisinées)
+            osl = data.get("openShoppingList") or {}
+            if isinstance(osl, dict):
+                meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+            # pendingMenu (si présent) en complément, dédupe par id de recette
+            pm = data.get("pendingMenu")
+            if isinstance(pm, dict):
+                seen = {(m.get("recipe") or {}).get("id") for m in meals}
+                for m in (pm.get("meals") or []):
+                    if isinstance(m, dict) and (m.get("recipe") or {}).get("id") not in seen:
+                        meals.append(m)
+
+        if not meals:
+            return {"imported": 0, "skipped": 0, "error": None, "note": "menu_jow_vide"}
+
+        # Les repas n'ont pas de date : remplir les jours vides de la semaine,
+        # dans l'ordre. Couverts : coversCount du repas Jow s'il est présent.
+        imported = 0
+        for day in self.week_dates(week_offset):
+            if not meals:
+                break
+            if self.plan.get(day.isoformat()):
+                continue
+            m = meals.pop(0)
+            recipe = m.get("recipe") or {}
+            rid = _safe_id(recipe.get("id") or recipe.get("_id"))
+            if not rid:
+                continue
+            covers = m.get("coversCount") or self.default_covers
+            stored = _recipe_to_dict(recipe, covers)
+            if stored:
+                self.plan[day.isoformat()] = stored
+                imported += 1
+
+        if imported:
             await self.async_save()
-        return result
+        _LOGGER.info("Import menu Jow (letscook) : %d importés", imported)
+        return {"imported": imported, "skipped": 0, "error": None}
 
     def _import_from_menu_data(self, data: Any, week_offset: int = 0) -> dict:
         """Cœur d'import du menu Jow : parsing pur, testable sans HTTP.
