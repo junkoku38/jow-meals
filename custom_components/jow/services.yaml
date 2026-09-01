@@ -195,6 +195,15 @@ suggest:
           max: 2000
           step: 10
           unit_of_measurement: kcal
+    rescue_expiry:
+      name: Sauver les ingrédients qui expirent
+      description: >-
+        Injecte en priorité dans le contexte IA les ingrédients périssables
+        du planning qui expirent sous 3 jours (viandes, crèmerie, légumes
+        frais) — la recette générée doit les écouler en priorité.
+      default: false
+      selector:
+        boolean:
     max_total_time:
       name: Temps total maximum
       description: >-
@@ -323,8 +332,10 @@ sync_calories:
 send_menu:
   name: Envoyer le menu à Jow
   description: >-
-    Envoie le menu planifié dans Home Assistant au compte Jow pour générer
-    le panier de courses sur jow.fr.
+    Envoie le planning de la semaine vers le compte Jow (jow.fr et app
+    mobile) — chaque recette part avec SA DATE et ses couverts (découvert
+    sur l'API : gol accepte {recipeId, date, covers}), le menu Jow se
+    remplit jour par jour au lieu d'entasser des plats sans date.
   fields:
     week_offset:
       name: Décalage de semaine
@@ -544,6 +555,52 @@ add_banned:
       selector:
         select:
           options: [add, remove]
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+import_menu:
+  name: Importer le menu depuis Jow
+  description: >-
+    Sens inverse de send_menu : récupère le menu de la semaine depuis le
+    compte Jow (plats ajoutés sur jow.fr ou l'app mobile) et les épingle
+    sur les jours vides du planning HA. Les jours déjà planifiés en HA
+    ne sont jamais écrasés. L'endpoint Jow est capricieux : le rapport
+    détaillé (imported / skipped / error) dit tout.
+  fields:
+    week_offset:
+      name: Décalage de semaine
+      description: 0 = semaine en cours, 1 = semaine prochaine.
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+expiring:
+  name: Ingrédients qui expirent bientôt
+  description: >-
+    Liste les ingrédients périssables des repas planifiés qui expirent
+    dans les prochains jours (heuristique de conservation par famille
+    d'ingrédient), triés par urgence. Utile pour une notification du
+    matin (« pense à cuisiner les épinards ») ou pour alimenter le mode
+    rescue de suggest.
+  fields:
+    within_days:
+      name: Horizon (jours)
+      description: Nombre de jours d'horizon de péremption.
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 14
     entry_name:
       name: Instance Jow
       description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.

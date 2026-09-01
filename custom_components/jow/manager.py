@@ -61,6 +61,30 @@ _GENERIC_WORDS = {
     "petit", "grand", "bon", "filet", "morceaux", "restes", "assorti",
 }
 
+# Péremption : durée de conservation (jours) par mot-clé d'ingrédient.
+# Heuristique volontairement grossière (moyenne ménagère) — utilisée par
+# le mode « rescue » de suggest pour prioriser les plats qui écoulent
+# ce qui expire, et par le capteur de péremption.
+_SHELF_LIFE_DAYS: dict[str, int] = {
+    # viande/poisson frais : 2-3 jours
+    "poulet": 2, "viande": 3, "boeuf": 3, "bœuf": 3, "porc": 3, "agneau": 3,
+    "dinde": 2, "steak": 2, "haché": 2, "saucisse": 4, "lardon": 4, "jambon": 5,
+    "poisson": 2, "saumon": 2, "cabillaud": 2, "colin": 2, "thon frais": 2,
+    "crevette": 2, "crevettes": 2,
+    # crèmerie : 5-15 jours
+    "lait": 5, "yaourt": 10, "fromage": 15, "emmental": 15, "mozzarella": 10,
+    "chèvre": 10, "comté": 30, "beurre": 20, "crème": 10, "oeuf": 14, "œuf": 14, "oeufs": 14,
+    # fruits/légumes : 4-14 jours
+    "salade": 4, "laitue": 4, "épinard": 3, "epinard": 3, "tomate": 7, "tomates": 7,
+    "concombre": 5, "courgette": 7, "aubergine": 7, "champignon": 4, "champignons": 4,
+    "banane": 4, "fraise": 2, "fraises": 2, "framboise": 2, "pêche": 4, "abricot": 4,
+    "avocat": 4, "herbe": 4, "basilic": 3, "persil": 5, "cilantro": 3,
+    "carotte": 14, "carottes": 14, "poireau": 10, "oignon": 30, "oignons": 30,
+    "ail": 30, "pomme de terre": 30, "patate": 30, "patates": 30,
+    # épicerie fraîche
+    "tofu": 5, "saucisson": 30, "lardons": 4,
+}
+
 # API Jow (non officielle).
 _JOW_SEARCH_URL = "https://api.jow.fr/public/recipe/quicksearch"
 _JOW_RECIPE_URL = "https://api.jow.fr/public/recipe"
@@ -951,6 +975,70 @@ class JowManager:
                 return shared.pop()
         return None
 
+    @staticmethod
+    def _shelf_life(ingredient_name: str) -> int | None:
+        """Durée de conservation (jours) d'un ingrédient, par mot-clé.
+
+        Heuristique : premier mot-clé connu du _SHELF_LIFE_DAYS trouvé dans
+        le nom (inclusion). None = péremption longue/inconnue (épicerie).
+        """
+        n = " ".join((ingredient_name or "").lower().split())
+        if not n:
+            return None
+        # clés les plus longues d'abord (« saumon fumé » > « saumon »
+        # n'existe pas encore, mais l'ordre est robuste si ajouté)
+        for key in sorted(_SHELF_LIFE_DAYS, key=len, reverse=True):
+            if key in n:
+                return _SHELF_LIFE_DAYS[key]
+        return None
+
+    def expiring_ingredients(self, within_days: int = 3, today: date | None = None) -> list[dict]:
+        """Ingrédients du planning qui expirent bientôt (rescue mode).
+
+        Construit l'inventaire « ce que la maison a/aura » depuis les
+        ingrédients des repas planifiés (aujourd'hui inclus en arrière),
+        leur associe une date limite par _shelf_life, et retourne ceux
+        qui expirent dans les `within_days` prochains jours — triés par
+        urgence. Le plat qui les contient déjà est le consommateur idéal.
+        """
+        today = today or date.today()
+        horizon = today + timedelta(days=within_days)
+        # inventaire: ingredient -> (expiry_date, source_meal_name)
+        inventory: dict[str, tuple[date, str]] = {}
+        # les repas passés ET à venir portent des ingrédients achetés/à acheter ;
+        # on considère les 3 jours passés (achats récents) et tous les futurs.
+        for day_iso, meal in self.plan.items():
+            try:
+                d = date.fromisoformat(day_iso)
+            except ValueError:
+                continue
+            if not isinstance(meal, dict):
+                continue
+            # date d'« entrée en cuisine » : le jour du repas, mais pour
+            # les repas passés on prend aujourd'hui (les restes sont là)
+            entry = max(d, today) if d >= today - timedelta(days=3) else None
+            if entry is None:
+                continue
+            for ing in meal.get("ingredients", []):
+                name = (ing.get("name") or "").strip().lower()
+                if not name:
+                    continue
+                life = self._shelf_life(name)
+                if life is None:
+                    continue
+                expiry = entry + timedelta(days=life)
+                if expiry <= today:
+                    continue  # déjà périmé : trop tard pour le rescue
+                prev = inventory.get(name)
+                if prev is None or expiry < prev[0]:
+                    inventory[name] = (expiry, meal.get("name", ""))
+        soon = [
+            {"ingredient": name, "expires": expiry.isoformat(), "days_left": (expiry - today).days, "meal": source}
+            for name, (expiry, source) in inventory.items()
+            if expiry <= horizon
+        ]
+        return sorted(soon, key=lambda x: x["days_left"])
+
     def _recent_families(self) -> list[str]:
         """Mots-clés forts communs aux plats récents (planifiés 4 semaines
         + rejets), triés par fréquence — la famille dominante d'abord.
@@ -1295,6 +1383,7 @@ class JowManager:
         overwrite: bool = True,
         max_calories: int | None = None,
         max_total_time: int | None = None,
+        rescue_expiry: bool = False,
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -1312,6 +1401,22 @@ class JowManager:
             if state and state.state not in (None, "unknown", "unavailable"):
                 temp = state.attributes.get("temperature", "?")
                 weather_ctx = f"Météo actuelle : {state.state}, {temp}°C. "
+
+        # Mode rescue : les ingrédients périssables du planning qui
+        # expirent sous peu sont injectés en PRIORITÉ dans le contexte —
+        # l'IA doit générer une requête qui les écoule avant la date
+        # limite (le gaspillage coûte plus cher que la variété).
+        rescue_ctx = ""
+        if rescue_expiry:
+            expiring = self.expiring_ingredients(within_days=3)
+            if expiring:
+                parts = [f"{e['ingredient']} (expire dans {e['days_left']}j)" for e in expiring[:6]]
+                rescue_ctx = (
+                    "INGRÉDIENTS À SAUVER EN PRIORITÉ (périssables bientôt "
+                    f"expirés) : {', '.join(parts)}. La recette doit en "
+                    "utiliser au moins un si possible. "
+                )
+                _LOGGER.info("Mode rescue : %d ingrédients expirants injectés", len(expiring))
 
         # Contraintes utilisateur
         constraints = ""
@@ -1352,7 +1457,7 @@ class JowManager:
             )
 
         instructions = (
-            f"{weather_ctx}{constraints}"
+            f"{weather_ctx}{rescue_ctx}{constraints}"
             "Génère une requête de recherche de recette courte (2 à 5 mots, "
             "sans guillemets ni ponctuation) adaptée au contexte. "
             "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
@@ -1363,7 +1468,7 @@ class JowManager:
         # Prompt IA personnalisé depuis la config de la carte
         if ai_prompt:
             instructions = (
-                f"{weather_ctx}{constraints}"
+                f"{weather_ctx}{rescue_ctx}{constraints}"
                 f"{ai_prompt} "
                 "Il s'agit d'un repas (plat principal, entrée ou dessert) — "
                 "JAMAIS de boisson, cocktail ou apéritif. "
@@ -1378,7 +1483,7 @@ class JowManager:
         # Si phrase longue, l'IA raisonne pour proposer une requête pertinente
         if is_long_phrase and ai_ent:
             instructions = (
-                f"{weather_ctx}{constraints}"
+                f"{weather_ctx}{rescue_ctx}{constraints}"
                 f"Un utilisateur demande : « {criteria} ». "
                 "Analyse cette demande et génère la meilleure requête de "
                 "recherche de recette (2 à 5 mots) pour trouver ce que "
@@ -1867,51 +1972,140 @@ class JowManager:
     async def async_send_menu_to_jow(self, week_offset: int = 0) -> int:
         """Envoie le menu de la semaine au compte Jow via POST /gol?type=recipeChosen.
 
-        Pour chaque repas planifié, envoie le recipeId à Jow pour l'ajouter
-        au menu de la semaine sur jow.fr. Retourne le nombre de recettes envoyées.
+        Chaque repas part avec sa DATE (découvert sur l'API : gol accepte
+        {recipeId, date, covers}) — le plat atterrit sur le bon jour du
+        menu jow.fr au lieu d'arriver orphelin. Retourne le nombre de
+        recettes envoyées.
         """
         if not self.jow_token:
             _LOGGER.warning("Envoi menu Jow impossible : non authentifié")
             return 0
 
-        # Récupérer les recipe_ids des repas planifiés
-        recipe_ids = []
+        # (day, meal) planifiés — la date au format ISO attendu par l'API
+        entries = []
         for day in self.week_dates(week_offset):
             meal = self.get_meal(day)
             if meal and meal.get("id"):
-                recipe_ids.append(meal["id"])
+                entries.append((day.isoformat(), meal))
 
-        if not recipe_ids:
+        if not entries:
             _LOGGER.warning("Aucun repas planifié à envoyer à Jow")
             return 0
 
-        def _send(rid):
+        def _send(date_iso: str, rid: str, covers):
             headers = self._jow_auth_headers()
             headers["content-type"] = "text/plain;charset=UTF-8"
             headers["x-jow-withmeta"] = "true"
+            payload = {"recipeId": rid, "date": date_iso}
+            if covers:
+                payload["covers"] = covers
             resp = requests.post(
                 "https://api.jow.fr/public/gol",
                 headers=headers,
                 params={"type": "recipeChosen", "availabilityZoneId": "FR"},
-                data=json.dumps({"recipeId": rid}),
+                data=json.dumps(payload),
                 timeout=15,
             )
             return resp.status_code
 
-        import asyncio
-        tasks = [self.hass.async_add_executor_job(_send, rid) for rid in recipe_ids]
+        tasks = [
+            self.hass.async_add_executor_job(_send, date_iso, meal["id"], meal.get("covers"))
+            for date_iso, meal in entries
+        ]
         statuses = await asyncio.gather(*tasks, return_exceptions=True)
         sent = 0
-        for rid, status in zip(recipe_ids, statuses, strict=False):
+        for (date_iso, meal), status in zip(entries, statuses, strict=False):
             if isinstance(status, Exception):
-                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", rid, status)
+                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", meal.get("id"), status)
             elif status in (200, 204):
                 sent += 1
             else:
-                _LOGGER.warning("Envoi recette %s à Jow : status %s", rid, status)
+                _LOGGER.warning(
+                    "Envoi recette %s (%s) à Jow : status %s", meal.get("id"), date_iso, status
+                )
 
-        _LOGGER.info("Menu envoyé à Jow : %d/%d recettes", sent, len(recipe_ids))
+        _LOGGER.info("Menu envoyé à Jow : %d/%d recettes (avec dates)", sent, len(entries))
         return sent
+
+    async def async_import_menu_from_jow(self, week_offset: int = 0) -> dict:
+        """Importe le menu de la semaine depuis le compte Jow (menu/week).
+
+        Sens Jow → HA de la synchro bidirectionnelle : les plats ajoutés
+        depuis l'app/mobile jow.fr atterrissent dans le planning HA.
+
+        L'endpoint est capricieux (500 observé sur des comptes dont le
+        menu serveur est dans un état inattendu) : parsing défensif,
+        aucune exception ne remonte — un rapport structuré est retourné.
+        """
+        resp = await self._async_jow_get(
+            JOW_MENU_URL, params={"availabilityZoneId": "FR"}
+        )
+        if resp is None:
+            return {"imported": 0, "error": "token_jow_absent"}
+        if resp.status_code == 204:
+            return {"imported": 0, "error": None, "note": "menu_jow_vide"}
+        if resp.status_code != 200:
+            return {"imported": 0, "error": f"http_{resp.status_code}"}
+        try:
+            data = resp.json().get("data", {})
+        except ValueError:
+            return {"imported": 0, "error": "reponse_illisible"}
+
+        result = self._import_from_menu_data(data, week_offset)
+        if result["imported"]:
+            await self.async_save()
+        return result
+
+    def _import_from_menu_data(self, data: Any, week_offset: int = 0) -> dict:
+        """Cœur d'import du menu Jow : parsing pur, testable sans HTTP.
+
+        Formats tolérés : {"recipes": [...]} (date par recette : date /
+        day / plannedDate) ou dict {date_iso: recette}. Ne JAMAIS écraser
+        un jour déjà planifié en HA.
+        """
+        raw = data.get("recipes") if isinstance(data, dict) else None
+        if raw is None and isinstance(data, dict):
+            raw = data  # peut-être {date: recette} directement
+
+        imported = 0
+        skipped = 0
+        week_keys = {d.isoformat(): d for d in self.week_dates(week_offset)}
+
+        def _try_import(date_iso: str | None, recipe: dict) -> None:
+            nonlocal imported, skipped
+            if not isinstance(recipe, dict):
+                skipped += 1
+                return
+            rid = _safe_id(recipe.get("id") or recipe.get("_id"))
+            if not rid or not date_iso or date_iso not in week_keys:
+                skipped += 1
+                return
+            # Ne pas écraser un repas déjà planifié ce jour-là en HA
+            if self.plan.get(date_iso):
+                skipped += 1
+                return
+            stored = _recipe_to_dict(recipe, self.default_covers)
+            if stored:
+                self.plan[date_iso] = stored
+                imported += 1
+            else:
+                skipped += 1
+
+        if isinstance(raw, list):
+            for recipe in raw:
+                # date au niveau recette (champs observés : date / day / plannedDate)
+                d = recipe.get("date") or recipe.get("day") or recipe.get("plannedDate")
+                _try_import(str(d)[:10] if d else None, recipe)
+        elif isinstance(raw, dict):
+            for date_iso, recipe in raw.items():
+                if isinstance(date_iso, str) and re.match(r"^\d{4}-\d{2}-\d{2}", date_iso):
+                    _try_import(date_iso[:10], recipe)
+                else:
+                    skipped += 1
+
+        if imported or skipped:
+            _LOGGER.info("Import menu Jow : %d importés, %d ignorés", imported, skipped)
+        return {"imported": imported, "skipped": skipped, "error": None}
 
     async def async_start_token_refresh(self) -> None:
         """Démarre le rafraîchissement périodique du token Jow.

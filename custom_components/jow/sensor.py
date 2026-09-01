@@ -28,6 +28,7 @@ async def async_setup_entry(
         JowDaySensor(manager, entry, index, week_offset=1) for index in range(7)
     )
     entities.append(JowTodaySensor(manager, entry))
+    entities.append(JowExpiringSensor(manager, entry))
     async_add_entities(entities)
 
 
@@ -150,3 +151,60 @@ class JowTodaySensor(JowBaseSensor):
     @property
     def _meal(self) -> dict | None:
         return self._manager.get_meal(date.today())
+
+
+class JowExpiringSensor(SensorEntity):
+    """Ingrédients périssables du planning qui expirent sous peu.
+
+    State = nombre d'ingrédients en danger ; attributes = détail trié par
+    urgence. Base pour une notification du matin ou le mode rescue de
+    suggest (rescue_expiry: true).
+    """
+
+    _attr_icon = "mdi:timer-alert"
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Ingrédients à sauver"
+
+    def __init__(self, manager: JowManager, entry: ConfigEntry) -> None:
+        self._manager = manager
+        self._attr_unique_id = f"{entry.entry_id}_expiring"
+        instance_name = (
+            entry.options.get("name")
+            or entry.data.get("name")
+            or entry.title
+            or "Jow"
+        ).strip() or "Jow"
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+            name=instance_name,
+            manufacturer="Jow (non officiel)",
+            entry_type=DeviceEntryType.SERVICE,
+        )
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self._manager.update_signal, self._handle_update)
+        )
+        self.async_on_remove(
+            async_track_time_change(
+                self.hass, self._handle_update, hour=0, minute=0, second=15
+            )
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int:
+        return len(self._manager.expiring_ingredients(within_days=3))
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        exp = self._manager.expiring_ingredients(within_days=3)
+        return {
+            "expiring": exp,
+            "horizon_days": 3,
+            "most_urgent": exp[0]["ingredient"] if exp else None,
+        }

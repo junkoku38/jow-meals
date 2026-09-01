@@ -253,6 +253,129 @@ def test_diversify_intra_list_one_per_family_except_query():
     assert [r["id"] for r in out] == ["d1", "w1"]
 
 
+# ---------------------------------------------------------------------------
+# Feature 9 : import menu Jow (parsing défensif)
+# ---------------------------------------------------------------------------
+
+def test_import_menu_parses_both_formats():
+    """menu/week peut renvoyer une liste de recettes datées ou un dict
+    {date: recette} — l'import gère les deux et n'écrase jamais un jour
+    déjà planifié."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    import asyncio
+
+    lundi = m.week_dates(0)[0].isoformat()
+    mardi = m.week_dates(0)[1].isoformat()
+    mercredi = m.week_dates(0)[2].isoformat()
+    m.plan = {mercredi: {"id": "deja", "name": "Déjà planifié"}}
+
+    # Format liste : recettes avec champ date
+    data_list = {
+        "recipes": [
+            {"id": "r1", "title": "Salade poulet", "date": lundi},
+            {"id": "r2", "title": "Wok légumes", "date": mardi},
+            {"id": "r3", "title": "Gratin", "date": mercredi},  # jour occupé → skip
+            {"id": "r4", "title": "Sans date"},                  # → skip
+        ]
+    }
+    imported = m._import_from_menu_data(data_list, week_offset=0)
+    assert imported["imported"] == 2
+    assert m.plan[lundi]["name"] == "Salade poulet"
+    assert m.plan[mardi]["name"] == "Wok légumes"
+    assert m.plan[mercredi]["name"] == "Déjà planifié"
+
+    # Format dict {date: recette}
+    m2 = _manager()
+    m2.async_save = AsyncMock(return_value=None)
+    jeudi = m2.week_dates(0)[3].isoformat()
+    data_dict = {"data": {jeudi: {"id": "r9", "title": "Curry tofu"}}}
+    res = m2._import_from_menu_data(data_dict["data"], week_offset=0)
+    assert res["imported"] == 1
+    assert m2.plan[jeudi]["name"] == "Curry tofu"
+
+
+# ---------------------------------------------------------------------------
+# Feature 10 : péremption + rescue
+# ---------------------------------------------------------------------------
+
+def test_shelf_life_lookup():
+    assert JowManager._shelf_life("poulet fermier") == 2
+    assert JowManager._shelf_life("tomates cerises") == 7
+    assert JowManager._shelf_life("pâtes") is None          # épicerie : longtemps
+    assert JowManager._shelf_life("") is None
+
+
+def test_expiring_ingredients_from_planning():
+    """Les ingrédients périssables des repas planifiés ressortent avec
+    leur urgence ; les longues conservations (pâtes) n'apparaissent pas."""
+    m = _manager()
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    hier = (today - _td(days=1)).isoformat()
+    demain = (today + _td(days=1)).isoformat()
+    m.plan = {
+        hier: {"id": "x1", "name": "Poulet rôti", "ingredients": [
+            {"name": "poulet"}, {"name": "pâtes"}]},
+        hier: {"id": "x1", "name": "Poulet rôti", "ingredients": [
+            {"name": "poulet"}, {"name": "pâtes"}, {"name": "champignons"}]},
+        demain: {"id": "x2", "name": "Salade", "ingredients": [
+            {"name": "tomates"}, {"name": "salade"}]},
+    }
+    exp = m.expiring_ingredients(within_days=4, today=today)
+    noms = {e["ingredient"] for e in exp}
+    assert "pâtes" not in noms                 # longue conservation
+    assert "poulet" in noms                    # hier+2j = expire demain
+    assert "champignons" in noms               # hier+4j = J+4 : dans l'horizon
+    assert "salade" not in noms                # demain+4j = J+5 : hors horizon
+    assert "tomates" not in noms               # demain+7j : hors horizon
+    # trié par urgence croissante
+    days = [e["days_left"] for e in exp]
+    assert days == sorted(days)
+
+
+def test_suggest_rescue_injects_expiring():
+    """rescue_expiry=True injecte les ingrédients expirants dans le
+    contexte envoyé à l'IA (on capture le prompt via le mock)."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = "ai_task.dummy"
+    m.plan = {}
+    import asyncio
+    from datetime import date as _date, timedelta as _td
+
+    today = _date.today()
+    m.plan[(today - _td(days=1)).isoformat()] = {
+        "id": "x1", "name": "Poulet rôti", "ingredients": [{"name": "poulet"}],
+    }
+    captured = {}
+
+    async def fake_generate(instructions, ai_ent, task_name="jow_recipe_suggest"):
+        # l'appel de génération de requête passe sans task_name explicite
+        captured["prompt"] = instructions
+        return "poulet citron"
+
+    async def fake_search(q, limit=5, start=0):
+        return [{"id": "r1", "title": "Poulet au citron"}]
+
+    async def fake_calories(rid):
+        return None
+
+    m._ai_generate = fake_generate
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+
+    asyncio.run(m.async_suggest(criteria="plat", rescue_expiry=True))
+    assert "SAUVER" in captured["prompt"]
+    assert "poulet" in captured["prompt"]
+
+    # Sans rescue : pas d'injection
+    captured.clear()
+    asyncio.run(m.async_suggest(criteria="plat", rescue_expiry=False))
+    assert "SAUVER" not in captured.get("prompt", "")
+
+
 def test_ai_pick_prompt_is_enriched():
     """La liste fournie à l'IA contient ingrédients, temps et calories,
     et le prompt mentionne les plats récents à varier."""

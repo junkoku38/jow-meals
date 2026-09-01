@@ -40,7 +40,9 @@ from .const import (
     SERVICE_CLEAR_WEEK,
     SERVICE_COPY_MEAL,
     SERVICE_EXCLUDE_INGREDIENT,
+    SERVICE_EXPIRING,
     SERVICE_GET_CONTEXT,
+    SERVICE_IMPORT_MENU,
     SERVICE_MEAL_DONE,
     SERVICE_PLAN_MEAL,
     SERVICE_REFRESH_SHOPPING_LIST,
@@ -220,6 +222,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             overwrite=call.data.get("overwrite", True),
             max_calories=call.data.get("max_calories"),
             max_total_time=call.data.get("max_total_time"),
+            rescue_expiry=call.data.get("rescue_expiry", False),
         )
         return {"recipes": results}
 
@@ -364,12 +367,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return {"updated": updated}
 
     async def handle_send_menu(call: ServiceCall) -> ServiceResponse:
-        """Envoie le menu de la semaine au compte Jow (panier)."""
+        """Envoie le menu de la semaine au compte Jow (avec dates)."""
         mgr = _get_manager(hass, call, manager)
         sent = await mgr.async_send_menu_to_jow(
             call.data.get(ATTR_WEEK_OFFSET, 0)
         )
         return {"sent": sent, "message": f"{sent} recettes envoyées à Jow"}
+
+    async def handle_expiring(call: ServiceCall) -> ServiceResponse:
+        """Liste les ingrédients périssables du planning qui expirent bientôt."""
+        mgr = _get_manager(hass, call, manager)
+        within = call.data.get("within_days", 3)
+        return {"expiring": mgr.expiring_ingredients(within_days=within)}
+
+    async def handle_import_menu(call: ServiceCall) -> ServiceResponse:
+        """Importe le menu de la semaine depuis le compte Jow (app/mobile)."""
+        mgr = _get_manager(hass, call, manager)
+        result = await mgr.async_import_menu_from_jow(
+            call.data.get(ATTR_WEEK_OFFSET, 0)
+        )
+        return result
 
     # Enregistrement des services (toujours ré-enregistrer pour que les
     # handlers pointent vers le manager courant après reload ; _get_manager
@@ -436,6 +453,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional("overwrite", default=True): cv.boolean,
             vol.Optional("max_calories"): vol.All(vol.Coerce(int), vol.Range(min=100, max=2000)),
             vol.Optional("max_total_time"): vol.All(vol.Coerce(int), vol.Range(min=5, max=240)),
+            vol.Optional("rescue_expiry", default=False): cv.boolean,
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )
@@ -540,6 +558,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         }),
         supports_response=SupportsResponse.ONLY,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_IMPORT_MENU, handle_import_menu,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXPIRING, handle_expiring,
+        schema=vol.Schema({
+            vol.Optional("within_days", default=3): vol.All(vol.Coerce(int), vol.Range(min=1, max=14)),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
 
     return True
 
@@ -568,6 +602,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_MEAL_DONE,
                 SERVICE_SYNC_CALORIES,
                 SERVICE_SEND_MENU,
+                SERVICE_IMPORT_MENU,
+                SERVICE_EXPIRING,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,
