@@ -304,6 +304,16 @@ cards:
 - **Petit-déjeuner / déjeuner / dîner** : ajouter une clé `meal_type` dans le
   stockage et multiplier les capteurs.
 - **Synchronisation Grocy** : appeler `grocy.add_missing_products_to_shopping_list`
+
+## Documentation de l'API Jow (non officielle)
+
+L'API de jow.fr n'est ni publique ni documentée. Les routes utilisées par
+cette intégration — et tous les pièges découverts en les testant — sont
+consignés dans **[docs/jow-api.md](docs/jow-api.md)** : authentification
+(refresh 48 h / 6 mois), recherche (OU logique, plafond 50/page), structure
+des recettes (deux emplacements pour `quantityPerCover`), le menu réel
+(`profile/letscook` + réécriture via `shoppinglist/open`), et les routes
+instables à éviter (`/menu`, `gol`).
   après `refresh_shopping_list` pour tenir compte du stock réel.
 - **Suivi calorique** : l'API Jow ne renvoie pas les valeurs nutritionnelles ;
   il faudrait les estimer côté LLM ou croiser les ingrédients avec Open Food
