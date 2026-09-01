@@ -388,7 +388,7 @@ meal_done:
       selector:
         number:
           min: -4
-          max: 4
+          max: 8
     entry_name:
       name: Instance Jow
       description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.

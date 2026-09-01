@@ -81,13 +81,11 @@ CONF_JOW_REFRESH_TOKEN = "jow_refresh_token"
 
 # API Jow auth
 JOW_API_BASE = "https://api.jow.fr/public"
-JOW_AUTH_URL = f"{JOW_API_BASE}/auth"
 JOW_AUTH_REFRESH_URL = f"{JOW_API_BASE}/auth/refresh"
 JOW_PROFILE_URL = f"{JOW_API_BASE}/profile"
 JOW_FAVORITES_URL = f"{JOW_API_BASE}/recipes/favorites"
 JOW_MENU_URL = f"{JOW_API_BASE}/menu/week"
 JOW_SHOPPING_URL = f"{JOW_API_BASE}/shoppinglist"
-JOW_ORDERS_URL = f"{JOW_API_BASE}/orders"
 # Access token valide 48h ; refresh token valide ~6 mois.
 # On rafraîchit toutes les 24h (avant expiration du access) pour rester
 # discret côté serveur et garder une marge de sécurité.

@@ -205,11 +205,6 @@ _TASTE_TO_INCO: dict[str, int] = {
     "mollusque": 14, "moule": 14, "huître": 14, "huitre": 14, "coquille": 14,
 }
 
-_INCO_LABELS = {
-    1: "gluten", 2: "crustacés", 3: "œufs", 4: "poissons", 5: "arachides",
-    6: "soja", 7: "lait", 8: "fruits à coque", 9: "céleri", 10: "moutarde",
-    11: "sésame", 12: "sulfites", 13: "lupin", 14: "mollusques",
-}
 
 
 def _deduce_allergens(recipe: Any) -> tuple[list[int], str]:
@@ -587,38 +582,23 @@ class JowManager:
             return None
 
     async def async_fetch_calories(self, recipe_id: str) -> int | None:
-        """Récupère les calories par portion depuis l'endpoint détail de Jow.
+        """Calories/pers depuis l'endpoint détail (nutritionalFacts ENERC).
 
-        L'API de recherche ne retourne pas les calories : il faut interroger
-        l'endpoint /public/recipe/{id} qui expose nutritionalFacts.
+        Délègue à async_get_recipe_detail (une seule implémentation du
+        fetch détail — avant, deux requêtes partaient sur le même
+        endpoint pour une même recette planifiée).
         """
-        if not recipe_id or not _ID_RE.match(recipe_id):
+        detail = await self.async_get_recipe_detail(recipe_id)
+        if not detail:
             return None
-
-        def _fetch():
-            url = f"{_JOW_RECIPE_URL}/{recipe_id}"
-            # L'endpoint détail exige x-jow-withmeta: true (et non "1")
-            headers = dict(_JOW_HEADERS)
-            headers["x-jow-withmeta"] = "true"
-            headers["accept"] = "application/json, text/plain, */*"
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            # nutritionalFacts : [{id: "ENERC", label: "Calories", unit: "kcal", amount: N}, ...]
-            facts = data.get("nutritionalFacts", [])
-            for fact in facts:
-                if fact.get("id") == "ENERC":
-                    try:
-                        return int(round(float(fact.get("amount", 0))))
-                    except (TypeError, ValueError):
-                        return None
-            return None
-
-        try:
-            return await self.hass.async_add_executor_job(_fetch)
-        except Exception as err:
-            _LOGGER.debug("Calories Jow indisponibles pour %s : %s", recipe_id, err)
-            return None
+        # nutritionalFacts : [{id: "ENERC", label: "Calories", unit: "kcal", amount: N}, ...]
+        for fact in detail.get("nutritionalFacts", []) or []:
+            if fact.get("id") == "ENERC":
+                try:
+                    return int(round(float(fact.get("amount", 0))))
+                except (TypeError, ValueError):
+                    return None
+        return None
 
     # ------------------------------------------------------------------
     # Planning
@@ -696,7 +676,6 @@ class JowManager:
         if meal and meal.get("id"):
             self._remember_rejected(meal)
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
 
     def _remember_rejected(self, meal: dict) -> None:
         """Ajoute un plat à la mémoire des rejets (dédupe par id, bornée)."""
@@ -716,7 +695,6 @@ class JowManager:
         # modifie aussi l'autre par effet d'aliasing.
         self.plan[to_day.isoformat()] = copy.deepcopy(meal)
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
         return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
 
     async def async_set_covers(self, day: date, covers: int) -> dict | None:
@@ -733,7 +711,6 @@ class JowManager:
                 with contextlib.suppress(TypeError, ValueError):
                     ing["quantity"] = round(float(qpc) * covers, 2)
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
         return {"covers": covers, "day": day.isoformat()}
 
     async def async_exclude_ingredient(self, ingredient: str) -> dict:
@@ -748,20 +725,21 @@ class JowManager:
         kept = []
         for item in self.shopping:
             summary_norm = self._norm(item["summary"])
-            item_name = (
-                summary_norm.split(" de ", 1)[1] if " de " in summary_norm else self._strip_quantity(summary_norm)
-            )
+            item_name = self._ingredient_name_from_summary(item["summary"])
             if norm in (item_name, summary_norm):
                 removed.append(item["summary"])
             else:
                 kept.append(item)
         self.shopping = kept
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
         return {"removed": removed, "count": len(removed)}
 
     async def async_clear_recent(self, date_iso: str) -> dict:
-        """Retire un plat de l'historique d'anti-répétition."""
+        """Retire un plat de l'historique d'anti-répétition.
+
+        Le plat marque _no_exclude et devient re-proposable immédiatement
+        (sans attendre la fenêtre de 4 semaines) ; il reste planifié.
+        """
         meal = self.plan.get(date_iso)
         if not meal:
             return {"error": "Aucun repas à cette date"}
@@ -806,7 +784,6 @@ class JowManager:
         détail de Jow pour chaque repas qui n'en a pas encore. Retourne le
         nombre de repas mis à jour.
         """
-        import asyncio
         days = self.week_dates(week_offset)
         pending = []
         for day in days:
@@ -843,7 +820,6 @@ class JowManager:
             if remember_rejects and meal and meal.get("id"):
                 self._remember_rejected(meal)
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
 
     async def async_renew_week(
         self,
@@ -905,7 +881,6 @@ class JowManager:
                 failures[weekday] = "aucune suggestion"
 
         await self.async_save()
-        async_dispatcher_send(self.hass, self.update_signal)
         _LOGGER.info(
             "Semaine renouvelée (offset %d) : %d vidés, %d planifiés, %d échecs",
             week_offset, cleared, len(planned), len(failures),
@@ -1040,6 +1015,35 @@ class JowManager:
         self.shopping = merged
         await self.async_save()
 
+    def _ingredient_name_from_summary(self, summary: str) -> str:
+        """Nom d'ingrédient depuis un summary de liste (« 200 g de riz » → « riz »).
+
+        Unifie l'extraction historique dupliquée entre meal_done et
+        exclude_ingredient : retrait de la quantité/unité de tête, puis
+        split sur « de » si présent.
+        """
+        n = self._norm(summary)
+        if " de " in n:
+            return n.split(" de ", 1)[1]
+        return self._strip_quantity(n)
+
+    def _recent_plan_ids_and_names(self, weeks: int = 4) -> tuple[set, list[str]]:
+        """Ids planifiés (fenêtre N semaines) + noms, unifié.
+
+        Remplace les 5 recalculs locaux de la fenêtre « 4 dernières
+        semaines » dispersés dans le code.
+        """
+        cutoff = (date.today() - timedelta(weeks=weeks)).isoformat()
+        ids: set = set()
+        names: list[str] = []
+        for day_iso, meal in self.plan.items():
+            if isinstance(meal, dict) and day_iso >= cutoff:
+                if meal.get("id"):
+                    ids.add(meal["id"])
+                if meal.get("name") and not meal.get("_no_exclude"):
+                    names.append(meal["name"])
+        return ids, names
+
     @staticmethod
     def _norm(text: str) -> str:
         """Normalise un libellé pour comparer (minuscules, espaces)."""
@@ -1163,14 +1167,7 @@ class JowManager:
         + rejets), triés par fréquence — la famille dominante d'abord.
         Ex: deux dahls récents -> ['dahl', …]. Sert à orienter la requête
         IA loin de ces familles."""
-        from datetime import date as _date
-        from datetime import timedelta as _td
-
-        cutoff = (_date.today() - _td(weeks=4)).isoformat()
-        names = [
-            meal.get("name", "") for day_iso, meal in self.plan.items()
-            if meal and day_iso >= cutoff
-        ]
+        _, names = self._recent_plan_ids_and_names(weeks=4)
         names += [r.get("name", "") for r in self.rejected[:_SIMILAR_WINDOW]]
         freq: dict[str, int] = {}
         for n in names:
@@ -1296,6 +1293,66 @@ class JowManager:
     # ------------------------------------------------------------------
     # Marquer un repas comme fait + retirer les ingrédients du stock
     # ------------------------------------------------------------------
+    async def _async_get_letscook(self) -> dict:
+        """Lecture unifiée de /profile/letscook (route stable du site).
+
+        Centralise les 3 lectures historiques (mark_cooked, send_menu,
+        import_menu) ; met à jour le cache jow_open_meals. Retourne {}
+        en cas d'échec (jamais d'exception).
+        """
+        resp = await self._async_jow_get(
+            "https://api.jow.fr/public/profile/letscook",
+            params={"availabilityZoneId": "FR", "nbMeals": 40},
+        )
+        if resp is None or resp.status_code != 200:
+            return {}
+        try:
+            data = resp.json().get("data", {}) or {}
+        except ValueError:
+            return {}
+        osl = data.get("openShoppingList") or {}
+        if isinstance(osl, dict):
+            meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+            if meals:
+                self.jow_open_meals = meals  # cache pour le capteur d'état
+        return data
+
+    async def _async_rewrite_open_list(self, body_meals: list[dict]) -> int:
+        """Réécriture unifiée de la liste ouverte (POST /shoppinglist/open).
+
+        Retourne le code HTTP (0 si impossible sans token). Le caller DOIT
+        avoir mergé l'existant avant — garantie anti-perte documentée.
+        """
+        if not self.jow_token:
+            return 0
+
+        def _post():
+            headers = self._jow_auth_headers()
+            headers["content-type"] = "application/json"
+            headers["accept"] = "application/json, text/plain, */*"
+            return requests.post(
+                "https://api.jow.fr/public/shoppinglist/open",
+                headers=headers,
+                params={
+                    "populateRecipes": "true",
+                    "populateIngredients": "true",
+                    "availabilityZoneId": "FR",
+                },
+                data=json.dumps({"meals": body_meals}),
+                timeout=20,
+            )
+
+        resp = await self.hass.async_add_executor_job(_post)
+        # le cache suit la liste réécrite si la réponse porte les repas
+        if resp.status_code in (200, 201, 204):
+            try:
+                rewritten = [m for m in (resp.json().get("meals") or []) if isinstance(m, dict)]
+                if rewritten:
+                    self.jow_open_meals = rewritten
+            except ValueError:
+                pass
+        return resp.status_code
+
     async def _async_mark_cooked_on_jow(self, recipe_id: str) -> None:
         """Marque une recette comme cuisinée dans le menu Jow (best effort).
 
@@ -1307,14 +1364,7 @@ class JowManager:
         if not self.jow_token or not recipe_id:
             return
         try:
-            # lire la liste ouverte
-            resp = await self._async_jow_get(
-                "https://api.jow.fr/public/profile/letscook",
-                params={"availabilityZoneId": "FR", "nbMeals": 40},
-            )
-            if resp is None or resp.status_code != 200:
-                return
-            data = resp.json().get("data", {})
+            data = await self._async_get_letscook()
             osl = data.get("openShoppingList") or {}
             meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
             if not any(
@@ -1337,28 +1387,12 @@ class JowManager:
                     **({"isCooked": True} if rid == recipe_id else {}),
                 })
 
-            def _post():
-                headers = self._jow_auth_headers()
-                headers["content-type"] = "application/json"
-                headers["accept"] = "application/json, text/plain, */*"
-                return requests.post(
-                    "https://api.jow.fr/public/shoppinglist/open",
-                    headers=headers,
-                    params={
-                        "populateRecipes": "true",
-                        "populateIngredients": "true",
-                        "availabilityZoneId": "FR",
-                    },
-                    data=json.dumps({"meals": body_meals}),
-                    timeout=20,
-                )
-
-            resp2 = await self.hass.async_add_executor_job(_post)
-            if resp2.status_code in (200, 201, 204):
+            status = await self._async_rewrite_open_list(body_meals)
+            if status in (200, 201, 204):
                 _LOGGER.info("Recette %s marquée cuisinée sur jow.fr", recipe_id)
             else:
                 _LOGGER.debug(
-                    "Marquage isCooked refusé (HTTP %s) — sans conséquence", resp2.status_code
+                    "Marquage isCooked refusé (HTTP %s) — sans conséquence", status
                 )
         except Exception as err:
             _LOGGER.debug("Marquage isCooked impossible : %s", err)
@@ -1399,9 +1433,7 @@ class JowManager:
             summary_norm = self._norm(item["summary"])
             # Extraction du nom d'ingrédient : "200 g de riz" -> "riz",
             # "200 g riz" -> "riz", "riz" -> "riz"
-            item_name = (
-                summary_norm.split(" de ", 1)[1] if " de " in summary_norm else self._strip_quantity(summary_norm)
-            )
+            item_name = self._ingredient_name_from_summary(item["summary"])
             if item_name in done_ingredients or summary_norm in done_ingredients:
                 removed.append(item["summary"])
             else:
@@ -1570,14 +1602,8 @@ class JowManager:
         excludedRecipesIds reçoit plats récents + rejets pour respecter
         l'anti-répétition côté serveur.
         """
-        from datetime import date as _date
-        from datetime import timedelta as _td
-
-        cutoff = (_date.today() - _td(weeks=4)).isoformat()
-        excluded: list[str] = list(exclude_ids or [])
-        for day_iso, meal in self.plan.items():
-            if meal and meal.get("id") and day_iso >= cutoff:
-                excluded.append(meal["id"])
+        recent_ids, _ = self._recent_plan_ids_and_names(weeks=4)
+        excluded: list[str] = list(exclude_ids or []) + list(recent_ids)
         excluded.extend(r.get("id") for r in self.rejected if r.get("id"))
 
         body: dict = {
@@ -1684,14 +1710,8 @@ class JowManager:
         if criteria:
             constraints += f"Demande : {criteria}. "
 
-        # Recettes récentes à éviter pour la diversité
-        from datetime import date as _date
-        from datetime import timedelta as _td
-        cutoff = (_date.today() - _td(weeks=4)).isoformat()
-        recent_names = []
-        for day_iso, meal in self.plan.items():
-            if meal and meal.get("name") and day_iso >= cutoff:
-                recent_names.append(meal["name"])
+        # Recettes récentes à éviter pour la diversité (helper unifié)
+        _recent_ids, recent_names = self._recent_plan_ids_and_names(weeks=4)
         # Inclure les rejets (effacés sans être mangés) dans la fenêtre
         # de variation : l'IA ne doit pas générer une requête « dahl »
         # juste après que l'utilisateur a refusé deux dahls.
@@ -1756,14 +1776,12 @@ class JowManager:
                 _LOGGER.warning("ai_task.generate_data a échoué (réponse vide)")
 
         # Fallback : utiliser criteria directement ou extraire les mots-clés
+        # (_query_keywords : LA liste de mots vides, avant deux listes
+        # divergentes coexistaient ici et dans le re-ranking)
         if not query:
             if is_long_phrase:
-                stop_words = {"propose", "moi", "un", "une", "des", "avec", "sans",
-                              "facile", "faire", "base", "pour", "the", "and",
-                              "repas", "recette", "cherche", "plat"}
-                keywords = [w for w in criteria_words
-                           if len(w) > 3 and w.lower() not in stop_words]
-                query = " ".join(keywords[:4]) if keywords else "recette"
+                keywords = self._query_keywords(criteria or "")[:4]
+                query = " ".join(keywords) if keywords else "recette"
             else:
                 query = criteria or "recette"
 
@@ -1796,14 +1814,7 @@ class JowManager:
         # Exclure les recettes déjà planifiées dans les 4 dernières semaines
         # (au lieu de tout l'historique) pour éviter les répétitions récentes
         # tout en laissant revenir les plats après un mois.
-        from datetime import date as _date
-        from datetime import timedelta as _td
-        cutoff = (_date.today() - _td(weeks=4)).isoformat()
-        deja_planifies = set()
-        for day_iso, meal in self.plan.items():
-            if meal and meal.get("id") and day_iso >= cutoff and not meal.get("_no_exclude"):
-                # (les repas marqués _no_exclude sont retirés de l'anti-répétition)
-                deja_planifies.add(meal["id"])
+        deja_planifies, _ = self._recent_plan_ids_and_names(weeks=4)
 
         # Exclure les plats REJETÉS (effacés sans être marqués faits) :
         # même absents du planning, ils ne doivent pas revenir pendant
@@ -1972,20 +1983,24 @@ class JowManager:
                     chosen = alts[0]
                 else:
                     # Aucune alternative conforme : on énumère les suivantes
-                    # (kcal inconnues) jusqu'à en trouver une sous le seuil.
+                    # (kcal inconnues) jusqu'à en trouver une sous le seuil —
+                    # garde-fou : au plus 10 lookups détail supplémentaires
+                    # (compteur, et non index() dans la liste : O(n) et
+                    # sémantique claire).
+                    lookups = 0
                     for cand in recipes[1:]:
+                        if lookups >= 10:
+                            break
                         cid = _safe_id(cand.get("id"))
                         if not cid:
                             continue
+                        lookups += 1
                         cal = await self.async_fetch_calories(cid)
                         if cal is not None:
                             cand["calories"] = cal
                             if cal <= max_calories:
                                 chosen = cand
                                 break
-                        # garde-fou : au plus 10 lookups détail supplémentaires
-                        if recipes.index(cand) > 10:
-                            break
                     else:
                         _LOGGER.warning(
                             "Aucune recette ≤ %d kcal trouvée : le choix IA est conservé",
@@ -2212,40 +2227,6 @@ class JowManager:
         except ValueError:
             return []
 
-    async def async_get_jow_shoppinglist(self) -> dict | None:
-        """Récupère la liste de courses du compte Jow (avec refresh 401)."""
-        resp = await self._async_jow_get(
-            JOW_SHOPPING_URL, params={"availabilityZoneId": "FR"}
-        )
-        if resp is None:
-            return None
-        if resp.status_code == 204:
-            return {}
-        if resp.status_code != 200:
-            _LOGGER.warning("Liste de courses Jow indisponible (HTTP %s)", resp.status_code)
-            return None
-        try:
-            return resp.json().get("data", {})
-        except ValueError:
-            return None
-
-    async def async_get_jow_menu(self) -> list[dict]:
-        """Récupère le menu de la semaine suggéré par Jow (avec refresh 401)."""
-        resp = await self._async_jow_get(
-            JOW_MENU_URL, params={"availabilityZoneId": "FR"}
-        )
-        if resp is None:
-            return []
-        if resp.status_code == 204:
-            return []
-        if resp.status_code != 200:
-            _LOGGER.warning("Menu Jow indisponible (HTTP %s)", resp.status_code)
-            return []
-        try:
-            return resp.json().get("data", {}).get("recipes", []) or []
-        except ValueError:
-            return []
-
     async def async_send_menu_to_jow(self, week_offset: int = 0) -> int:
         """Envoie le planning de la semaine au menu du compte Jow.
 
@@ -2275,19 +2256,9 @@ class JowManager:
             return 0
 
         # 2) lire la liste ouverte actuelle (route stable du site)
-        existing_meals: list[dict] = []
-        resp = await self._async_jow_get(
-            "https://api.jow.fr/public/profile/letscook",
-            params={"availabilityZoneId": "FR", "nbMeals": 40},
-        )
-        if resp is not None and resp.status_code == 200:
-            try:
-                data = resp.json().get("data", {})
-                osl = data.get("openShoppingList") or {}
-                existing_meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
-                self.jow_open_meals = existing_meals  # cache pour le capteur d'état
-            except ValueError:
-                existing_meals = []
+        data = await self._async_get_letscook()
+        osl = data.get("openShoppingList") or {}
+        existing_meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
 
         # 3) merger : plats existants conservés, plats HA ajoutés si absents
         existing_ids = {
@@ -2320,42 +2291,17 @@ class JowManager:
             _LOGGER.info("Menu Jow déjà à jour (aucun plat HA à ajouter)")
             return 0
 
-        # 4) réécrire la liste ouverte avec l'union
-        def _post():
-            headers = self._jow_auth_headers()
-            headers["content-type"] = "application/json"
-            headers["x-jow-withmeta"] = "true"
-            headers["accept"] = "application/json, text/plain, */*"
-            return requests.post(
-                "https://api.jow.fr/public/shoppinglist/open",
-                headers=headers,
-                params={
-                    "populateRecipes": "true",
-                    "populateIngredients": "true",
-                    "availabilityZoneId": "FR",
-                },
-                data=json.dumps({"meals": body_meals}),
-                timeout=20,
-            )
-
-        resp = await self.hass.async_add_executor_job(_post)
-        if resp.status_code in (200, 201, 204):
+        # 4) réécrire la liste ouverte avec l'union (cache mis à jour par le helper)
+        status = await self._async_rewrite_open_list(body_meals)
+        if status in (200, 201, 204):
             _LOGGER.info(
                 "Menu envoyé à Jow : %d plats ajoutés (liste réécrite avec %d au total)",
                 added, len(body_meals),
             )
-            # le cache suit la liste réécrite (recettes peuplées dans la réponse)
-            try:
-                rewritten = [m for m in (resp.json().get("meals") or [])
-                             if isinstance(m, dict)]
-                if rewritten:
-                    self.jow_open_meals = rewritten
-            except ValueError:
-                pass
             return added
         _LOGGER.warning(
             "Réécriture de la liste Jow échouée (HTTP %s) — la liste existante est préservée",
-            resp.status_code,
+            status,
         )
         return 0
 
@@ -2393,18 +2339,11 @@ class JowManager:
                 pass  # réponse illisible : on replie sur letscook
 
         # 2) source de repli : profile/letscook (route du site, stable)
-        resp = await self._async_jow_get(
-            "https://api.jow.fr/public/profile/letscook",
-            params={"availabilityZoneId": "FR", "nbMeals": 40},
-        )
-        if resp is None:
+        if not self.jow_token:
             return {"imported": 0, "error": "token_jow_absent"}
-        if resp.status_code != 200:
-            return {"imported": 0, "error": f"http_{resp.status_code}"}
-        try:
-            data = resp.json().get("data", {})
-        except ValueError:
-            return {"imported": 0, "error": "reponse_illisible"}
+        data = await self._async_get_letscook()
+        if not data:
+            return {"imported": 0, "error": "lecture_letscook_impossible"}
 
         meals = []
         if isinstance(data, dict):
@@ -2412,7 +2351,6 @@ class JowManager:
             osl = data.get("openShoppingList") or {}
             if isinstance(osl, dict):
                 meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
-                self.jow_open_meals = meals  # cache pour le capteur d'état
             # pendingMenu (si présent) en complément, dédupe par id de recette
             pm = data.get("pendingMenu")
             if isinstance(pm, dict):

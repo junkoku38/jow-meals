@@ -366,8 +366,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_clear_recent(call: ServiceCall) -> ServiceResponse:
         """Retire un plat de l'anti-répétition (pourra être re-proposé)."""
         mgr = _get_manager(hass, call, manager)
-        date_iso = call.data.get("date", "")
-        result = await mgr.async_clear_recent(date_iso)
+        day = _resolve_date(mgr, call)
+        result = await mgr.async_clear_recent(day.isoformat())
         return result
 
     async def handle_add_avoid(call: ServiceCall) -> ServiceResponse:
@@ -577,7 +577,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({
             vol.Required(ATTR_QUERY): cv.string,
             vol.Optional(ATTR_LIMIT, default=5): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
-            vol.Optional(ATTR_COVERS): vol.Coerce(int),
+            vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
@@ -663,7 +663,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.services.async_register(
         DOMAIN, SERVICE_CLEAR_RECENT, handle_clear_recent,
         schema=vol.Schema({
-            vol.Required("date"): cv.string,
+            vol.Optional("date"): cv.string,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
