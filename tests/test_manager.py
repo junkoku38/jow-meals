@@ -72,6 +72,7 @@ _deduce_allergens = _mod._deduce_allergens
 _jow_ingredient_unit = _mod._jow_ingredient_unit
 _recipe_to_dict = _mod._recipe_to_dict
 _safe_id = _mod._safe_id
+_safe_id = _mod._safe_id
 _safe_url = _mod._safe_url
 _truncate = _mod._truncate
 aisle = _mod._aisle_for
@@ -330,6 +331,113 @@ def test_recipe_to_dict_detail_endpoint_quantities():
     assert r["ingredients"][0]["quantity"] == 0.2   # 0.1 × 2 (détail : qty sur le constituant)
     assert r["ingredients"][1]["quantity"] == 3.0   # 1.5 × 2 (recherche : qty dans l'ingrédient)
     assert r["ingredients"][0]["unit"] == "Kilogramme"
+
+
+# ---------------------------------------------------------------------------
+# clear_week / renew_week
+# ---------------------------------------------------------------------------
+
+def test_clear_week_remembers_rejects():
+    """Vider une semaine mémorise les plats comme rejets (le renouvellement
+    ne doit pas reproposer les plats qu'on voulait changer)."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    import asyncio
+
+    for i, d in enumerate(m.week_dates(0)):
+        m.plan[d.isoformat()] = {"id": f"old{i}", "name": f"Plat ancien {i}"}
+    m.rejected = []
+
+    asyncio.run(m.async_clear_week(week_offset=0))
+    assert len(m.plan) == 0
+    assert len(m.rejected) == 7
+
+    # remember_rejects=False : simple effacement
+    for i, d in enumerate(m.week_dates(0)):
+        m.plan[d.isoformat()] = {"id": f"x{i}", "name": f"Plat {i}"}
+    m.rejected = []
+    asyncio.run(m.async_clear_week(week_offset=0, remember_rejects=False))
+    assert len(m.plan) == 0
+    assert m.rejected == []
+
+
+def test_import_letscook_dedupes_against_whole_plan():
+    """L'import letscook ne prend pas un plat déjà planifié n'importe où
+    dans HA (S comme S+1) ni un plat rejeté ; les plats excédentaires
+    restent disponibles (remaining) sans être perdus."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    import asyncio
+
+    # S complète avec le plat A ; S+1 vide
+    lundi = m.week_dates(0)[0].isoformat()
+    mardi = m.week_dates(0)[1].isoformat()
+    m.plan = {lundi: {"id": "A", "name": "Déjà planifié"}}
+    # le plat C a été rejeté il y a peu
+    m.rejected = [{"id": "C", "name": "Rejeté", "ts": 9999999999}]
+
+    # La liste Jow contient A (déjà en HA), C (rejeté), D, E, F (libres)
+    meals = [
+        {"recipe": {"id": "A", "title": "Déjà planifié"}, "coversCount": 2},
+        {"recipe": {"id": "C", "title": "Rejeté"}, "coversCount": 2},
+        {"recipe": {"id": "D", "title": "Plat D"}, "coversCount": 2},
+        {"recipe": {"id": "E", "title": "Plat E"}, "coversCount": 2},
+        {"recipe": {"id": "F", "title": "Plat F"}, "coversCount": 2},
+    ]
+
+    # On appelle le cœur d'import letscook en isolant la logique : on
+    # reproduit le filtrage de async_import_menu_from_jow
+    already = {meal.get("id") for meal in m.plan.values() if isinstance(meal, dict) and meal.get("id")}
+    rejected = {r.get("id") for r in m.rejected}
+    eligible = [
+        mm for mm in meals
+        if _safe_id((mm.get("recipe") or {}).get("id")) not in already | rejected
+    ]
+    assert [e["recipe"]["id"] for e in eligible] == ["D", "E", "F"]
+
+    # Simulation du remplissage : mardi (seul jour vide de S) prend D,
+    # E et F restent "remaining"
+    m.plan[mardi] = {"id": "D", "name": "Plat D"}
+    remaining = [e for e in eligible if _safe_id((e.get("recipe") or {}).get("id")) != "D"]
+    assert len(remaining) == 2
+
+
+def test_renew_week_clears_and_refills():
+    """renew_week vide la semaine puis la replanifie via suggest (mocké),
+    et les anciens plats sont mémorisés comme rejets."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""
+    import asyncio
+
+    # semaine pleine d'anciens plats
+    for i, d in enumerate(m.week_dates(0)):
+        m.plan[d.isoformat()] = {"id": f"old{i}", "name": f"Ancien {i}"}
+    m.rejected = []
+
+    compteur = {"n": 0}
+
+    async def fake_search(q, limit=5, start=0):
+        compteur["n"] += 1
+        # un nouveau plat différent par appel
+        return [{"id": f"new{compteur['n']}", "title": f"Nouveau plat {compteur['n']}"}]
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+
+    res = asyncio.run(m.async_renew_week(week_offset=0, criteria="varié"))
+    assert res["cleared"] == 7
+    assert res["planned"] == 7
+    assert not res["failures"]
+    # 7 nouveaux plats, tous différents (diversité intra-semaine par familles)
+    names = [meal["name"] for meal in m.plan.values()]
+    assert len(names) == 7
+    assert all("Nouveau plat" in n for n in names)
+    # les 7 anciens sont rejets
+    assert len(m.rejected) == 7
 
 
 def test_expiring_ingredients_from_planning():

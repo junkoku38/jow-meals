@@ -827,10 +827,86 @@ class JowManager:
             await self.async_save()
         return updated
 
-    async def async_clear_week(self, week_offset: int = 0) -> None:
+    async def async_clear_week(self, week_offset: int = 0, remember_rejects: bool = True) -> None:
+        """Efface tous les repas de la semaine visée.
+
+        remember_rejects : les plats effacés en BLOC sont mémorisés comme
+        rejets (le « Renouveler la semaine » ne doit pas reproposer les
+        mêmes plats que l'on veut justement changer).
+        """
         for day in self.week_dates(week_offset):
-            self.plan.pop(day.isoformat(), None)
+            meal = self.plan.pop(day.isoformat(), None)
+            if remember_rejects and meal and meal.get("id"):
+                self._remember_rejected(meal)
         await self.async_save()
+        async_dispatcher_send(self.hass, self.update_signal)
+
+    async def async_renew_week(
+        self,
+        week_offset: int = 0,
+        covers: int | None = None,
+        criteria: str = "plat varié équilibré",
+        weather_entity: str | None = None,
+        ai_entity: str | None = None,
+        ai_prompt: str = "",
+        max_calories: int | None = None,
+        max_total_time: int | None = None,
+        day_criteria: dict[str, str] | None = None,
+    ) -> dict:
+        """Renouvelle toute la semaine : vide puis replanifie via l'IA.
+
+        Un « Renouveler » = clear_week(remember_rejects=True) + remplissage
+        jour par jour via async_suggest (overwrite=True : les jours sont
+        vides, la garde ne sert à rien) avec la diversité inter-jours
+        naturelle du pipeline (familles récentes, rejets). day_criteria
+        permet un critère par jour (ex: {"vendredi": "plaisir"}).
+
+        Retour : {"cleared": n, "planned": n, "days": {jour: plat}}.
+        """
+        # 1) vider en mémorisant les rejets
+        cleared = 0
+        for day in self.week_dates(week_offset):
+            if self.plan.get(day.isoformat()):
+                cleared += 1
+        await self.async_clear_week(week_offset=week_offset, remember_rejects=True)
+
+        # 2) remplir chaque jour via le pipeline suggest complet
+        planned: dict[str, str] = {}
+        failures: dict[str, str] = {}
+        for idx, day in enumerate(self.week_dates(week_offset)):
+            weekday = WEEKDAYS[idx]
+            day_crit = (day_criteria or {}).get(weekday, criteria)
+            try:
+                await self.async_suggest(
+                    criteria=day_crit,
+                    covers=covers,
+                    limit=5,
+                    weather_entity=weather_entity,
+                    ai_entity=ai_entity,
+                    weekday=weekday,
+                    week_offset=week_offset,
+                    ai_prompt=ai_prompt,
+                    overwrite=True,
+                    max_calories=max_calories,
+                    max_total_time=max_total_time,
+                )
+            except Exception as err:
+                _LOGGER.warning("Renouvellement %s échoué : %s", weekday, err)
+                failures[weekday] = str(err)
+                continue
+            meal = self.plan.get(day.isoformat())
+            if meal and meal.get("name"):
+                planned[weekday] = meal["name"]
+            else:
+                failures[weekday] = "aucune suggestion"
+
+        await self.async_save()
+        async_dispatcher_send(self.hass, self.update_signal)
+        _LOGGER.info(
+            "Semaine renouvelée (offset %d) : %d vidés, %d planifiés, %d échecs",
+            week_offset, cleared, len(planned), len(failures),
+        )
+        return {"cleared": cleared, "planned": len(planned), "days": planned, "failures": failures}
 
     async def async_purge_old(self, keep_days: int = 30) -> None:
         """Supprime les repas trop anciens et persiste le résultat."""
@@ -2070,7 +2146,7 @@ class JowManager:
         # 2) source de repli : profile/letscook (route du site, stable)
         resp = await self._async_jow_get(
             "https://api.jow.fr/public/profile/letscook",
-            params={"availabilityZoneId": "FR", "nbMeals": 14},
+            params={"availabilityZoneId": "FR", "nbMeals": 40},
         )
         if resp is None:
             return {"imported": 0, "error": "token_jow_absent"}
@@ -2098,15 +2174,39 @@ class JowManager:
         if not meals:
             return {"imported": 0, "skipped": 0, "error": None, "note": "menu_jow_vide"}
 
-        # Les repas n'ont pas de date : remplir les jours vides de la semaine,
-        # dans l'ordre. Couverts : coversCount du repas Jow s'il est présent.
+        # Dédoublonnage GLOBAL : ne pas importer un plat déjà planifié
+        # n'importe où dans le planning HA (semaine courante, S+1, tout
+        # l'historique récent) — sinon S et S+1 recevaient les mêmes plats
+        # et un plat déjà cuisiné cette semaine revenait.
+        already_planned = {
+            meal.get("id")
+            for meal in self.plan.values()
+            if isinstance(meal, dict) and meal.get("id")
+        }
+        # Les rejets ne doivent pas revenir par l'import non plus : un plat
+        # refusé dans HA est refusé, même si la liste Jow le contient encore.
+        rejected_ids = {r.get("id") for r in self.rejected}
+        eligible = []
+        skipped_deja = 0
+        for m in meals:
+            rid = _safe_id((m.get("recipe") or {}).get("id") or (m.get("recipe") or {}).get("_id"))
+            if rid in already_planned or rid in rejected_ids:
+                skipped_deja += 1
+                continue
+            eligible.append(m)
+
+        # Les repas n'ont pas de date : remplir les jours vides de la semaine
+        # visée, dans l'ordre. Couverts : coversCount du repas Jow s'il est
+        # présent. Les plats non placés ne sont PAS perdus : ils restent dans
+        # la liste Jow, un import ultérieur (autre semaine, jours libérés)
+        # les reprendra — puisqu'on ne marque rien côté Jow.
         imported = 0
         for day in self.week_dates(week_offset):
-            if not meals:
+            if not eligible:
                 break
             if self.plan.get(day.isoformat()):
                 continue
-            m = meals.pop(0)
+            m = eligible.pop(0)
             recipe = m.get("recipe") or {}
             rid = _safe_id(recipe.get("id") or recipe.get("_id"))
             if not rid:
@@ -2119,8 +2219,16 @@ class JowManager:
 
         if imported:
             await self.async_save()
-        _LOGGER.info("Import menu Jow (letscook) : %d importés", imported)
-        return {"imported": imported, "skipped": 0, "error": None}
+        _LOGGER.info(
+            "Import menu Jow (letscook) : %d importés, %d écartés (déjà planifiés/rejetés), %d restants pour plus tard",
+            imported, skipped_deja, len(eligible),
+        )
+        return {
+            "imported": imported,
+            "skipped": skipped_deja,
+            "remaining": len(eligible),
+            "error": None,
+        }
 
     def _import_from_menu_data(self, data: Any, week_offset: int = 0) -> dict:
         """Cœur d'import du menu Jow : parsing pur, testable sans HTTP.

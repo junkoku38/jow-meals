@@ -81,6 +81,10 @@ clear_meal:
 
 clear_week:
   name: Effacer la semaine
+  description: >-
+    Efface les 7 repas de la semaine visée. Les plats effacés sont
+    mémorisés comme rejets (l'anti-répétition les évite 60 jours) —
+    désactivable via remember_rejects: false.
   fields:
     week_offset:
       default: 0
@@ -88,6 +92,87 @@ clear_week:
         number:
           min: -4
           max: 8
+    remember_rejects:
+      name: Mémoriser comme rejets
+      description: >-
+        true (défaut) : les plats effacés en bloc ne seront pas
+        reproposés par les suggestions pendant 60 jours. false : simple
+        effacement, les plats restent éligibles.
+      default: true
+      selector:
+        boolean:
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:
+
+renew_week:
+  name: Renouveler la semaine
+  description: >-
+    Vide la semaine (plats mémorisés comme rejets) puis la replanifie
+    entièrement via le pipeline IA : requête contextualisée, recherche
+    100 résultats, filtres (interdits, anti-répétition, familles),
+    sélection IA. Idéal pour « change-moi toute la semaine ».
+  fields:
+    week_offset:
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    criteria:
+      name: Critère global
+      description: 'Critère de base pour tous les jours (ex : "plat varié équilibré").'
+      default: plat varié équilibré
+      selector:
+        text:
+    day_criteria:
+      name: Critères par jour
+      description: >-
+        Surcharge le critère pour des jours précis. Ex :
+        { "vendredi": "plaisir", "dimanche": "plat familial" }.
+      selector:
+        object:
+    covers:
+      name: Couverts
+      selector:
+        number:
+          min: 1
+          max: 12
+    weather_entity:
+      name: Entité météo
+      selector:
+        entity:
+          domain: weather
+    ai_entity:
+      name: Agent IA
+      selector:
+        entity:
+          domain: ai_task
+    ai_prompt:
+      name: Invite IA
+      description: Surcharge partielle ou totale de l'invite (avancé).
+      selector:
+        text:
+    max_calories:
+      name: Calories maximum
+      description: Contrainte forte sur le plat planifié (kcal/pers, vide = aucune).
+      selector:
+        number:
+          min: 100
+          max: 2000
+          step: 10
+          unit_of_measurement: kcal
+    max_total_time:
+      name: Temps total maximum
+      description: Filtre dur avant sélection (minutes, vide = aucun).
+      selector:
+        number:
+          min: 5
+          max: 240
+          step: 5
+          unit_of_measurement: min
     entry_name:
       name: Instance Jow
       description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.

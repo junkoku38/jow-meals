@@ -46,6 +46,7 @@ from .const import (
     SERVICE_MEAL_DONE,
     SERVICE_PLAN_MEAL,
     SERVICE_REFRESH_SHOPPING_LIST,
+    SERVICE_RENEW_WEEK,
     SERVICE_SEARCH,
     SERVICE_SEND_MENU,
     SERVICE_SET_COVERS,
@@ -187,9 +188,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         mgr = _get_manager(hass, call, manager)
         await mgr.async_clear_meal(_resolve_date(mgr, call))
 
-    async def handle_clear_week(call: ServiceCall) -> None:
+    async def handle_clear_week(call: ServiceCall) -> ServiceResponse:
+        """Vide la semaine (les plats effacés nourrissent la mémoire des rejets)."""
         mgr = _get_manager(hass, call, manager)
-        await mgr.async_clear_week(call.data.get(ATTR_WEEK_OFFSET, 0))
+        await mgr.async_clear_week(
+            call.data.get(ATTR_WEEK_OFFSET, 0),
+            remember_rejects=call.data.get("remember_rejects", True),
+        )
+        return {"message": "Semaine vidée"}
+
+    async def handle_renew_week(call: ServiceCall) -> ServiceResponse:
+        """Renouvelle la semaine : vide puis replanifie 7 jours via l'IA."""
+        mgr = _get_manager(hass, call, manager)
+        result = await mgr.async_renew_week(
+            week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+            covers=call.data.get(ATTR_COVERS),
+            criteria=call.data.get(ATTR_CRITERIA, "plat varié équilibré"),
+            weather_entity=call.data.get(CONF_WEATHER_ENTITY),
+            ai_entity=call.data.get(CONF_AI_ENTITY),
+            ai_prompt=call.data.get("ai_prompt", ""),
+            max_calories=call.data.get("max_calories"),
+            max_total_time=call.data.get("max_total_time"),
+            day_criteria=call.data.get("day_criteria"),
+        )
+        return result
 
     async def handle_refresh_list(call: ServiceCall) -> None:
         mgr = _get_manager(hass, call, manager)
@@ -417,8 +439,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, SERVICE_CLEAR_WEEK, handle_clear_week,
         schema=vol.Schema({
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional("remember_rejects", default=True): cv.boolean,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_RENEW_WEEK, handle_renew_week,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_CRITERIA): cv.string,
+            vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
+            vol.Optional(CONF_WEATHER_ENTITY): cv.string,
+            vol.Optional(CONF_AI_ENTITY): cv.string,
+            vol.Optional("ai_prompt"): cv.string,
+            vol.Optional("max_calories"): vol.All(vol.Coerce(int), vol.Range(min=100, max=2000)),
+            vol.Optional("max_total_time"): vol.All(vol.Coerce(int), vol.Range(min=5, max=240)),
+            vol.Optional("day_criteria"): {vol.In(WEEKDAYS): cv.string},
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_REFRESH_SHOPPING_LIST, handle_refresh_list,
@@ -604,6 +644,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SEND_MENU,
                 SERVICE_IMPORT_MENU,
                 SERVICE_EXPIRING,
+                SERVICE_RENEW_WEEK,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,
