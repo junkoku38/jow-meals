@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import json
 import logging
 import re
+import time
 from typing import Any
 from urllib.parse import urlparse
 import uuid
@@ -42,6 +43,23 @@ _MAX_FIELD_LEN = 2000
 _MAX_NAME_LEN = 200
 _MAX_ITEMS = 500
 _MAX_SUMMARY_LEN = 500
+
+# Mémoire des rejets : un plat effacé (« je ne veux pas de celui-là »)
+# reste exclu des suggestions pendant cette durée, même s'il n'est plus
+# dans le planning ; au-delà il peut revenir. Borné en nombre d'entrées.
+REJECT_MEMORY_DAYS = 60
+_MAX_REJECTED = 200
+
+# Anti-répétition du CHOIX : au-delà des ids exclus, on écarte aussi les
+# plats partageant le même mot-clé fort (curry, risotto, tajine…) que les
+# N derniers plats planifiés/rejetés — sinon une semaine peut recevoir
+# « curry lentilles », « curry poulet », « curry légumes ».
+_SIMILAR_WINDOW = 6
+_GENERIC_WORDS = {
+    "recette", "plat", "facon", "façon", "style", "maison", "rapide",
+    "simple", "facile", "express", "light", "leger", "léger", "vrai",
+    "petit", "grand", "bon", "filet", "morceaux", "restes", "assorti",
+}
 
 # API Jow (non officielle).
 _JOW_SEARCH_URL = "https://api.jow.fr/public/recipe/quicksearch"
@@ -397,6 +415,11 @@ class JowManager:
         # Synchronisé avec Jow au démarrage, mais l'utilisateur peut en
         # ajouter/retirer manuellement.
         self.banned_ingredients: list[str] = []
+        # Plats rejetés (« Effacer ce jour » sur un plat non voulu) :
+        # [{"id", "name", "ts"}] — l'anti-répétition doit les éviter même
+        # s'ils ne sont plus dans le planning (sinon l'IA les reproposait
+        # immédiatement après effacement).
+        self.rejected: list[dict] = []
 
     @property
     def update_signal(self) -> str:
@@ -438,6 +461,15 @@ class JowManager:
         # aux redémarrages (la carte « favoris » reste utilisable hors ligne).
         favs = data.get("favorites", [])
         self.favorites = [f for f in favs if isinstance(f, dict)] if isinstance(favs, list) else []
+        # Plats rejetés (persistés) — purgés des entrées trop anciennes
+        # (au-delà de REJECT_MEMORY_DAYS jours, le plat peut revenir).
+        rejects = data.get("rejected", [])
+        if isinstance(rejects, list):
+            cutoff_ts = time.time() - REJECT_MEMORY_DAYS * 86400
+            self.rejected = [
+                r for r in rejects
+                if isinstance(r, dict) and r.get("id") and r.get("ts", 0) >= cutoff_ts
+            ][:_MAX_REJECTED]
 
     async def async_save_favorites(self) -> None:
         """Persiste uniquement le cache des favoris."""
@@ -451,6 +483,7 @@ class JowManager:
             "banned_ingredients": self.banned_ingredients,
             "avoid_ingredients": self.avoid_ingredients,
             "favorites": self.favorites,
+            "rejected": self.rejected,
         }
 
     async def async_save(self) -> None:
@@ -564,9 +597,30 @@ class JowManager:
         return stored
 
     async def async_clear_meal(self, day: date) -> None:
-        self.plan.pop(day.isoformat(), None)
+        """Efface le repas d'un jour.
+
+        Le plat effacé est mémorisé comme rejeté : contrairement à
+        meal_done (plat mangé → anti-répétition standard de 4 semaines),
+        un effacement manuel traduit un désintérêt — l'anti-répétition
+        doit le respecter même hors planning pendant REJECT_MEMORY_DAYS,
+        sinon la suggestion suivante le reproposait immédiatement.
+        (les plats déjà présents dans la mémoire ne sont pas rejetés
+        deux fois — dédupe par id)
+        """
+        meal = self.plan.pop(day.isoformat(), None)
+        if meal and meal.get("id"):
+            self._remember_rejected(meal)
         await self.async_save()
         async_dispatcher_send(self.hass, self.update_signal)
+
+    def _remember_rejected(self, meal: dict) -> None:
+        """Ajoute un plat à la mémoire des rejets (dédupe par id, bornée)."""
+        rid = meal.get("id")
+        if not rid:
+            return
+        self.rejected = [r for r in self.rejected if r.get("id") != rid]
+        self.rejected.insert(0, {"id": rid, "name": meal.get("name", ""), "ts": time.time()})
+        self.rejected = self.rejected[:_MAX_REJECTED]
 
     async def async_copy_meal(self, from_day: date, to_day: date) -> dict | None:
         """Copie un repas d'un jour vers un autre (pratique pour les restes)."""
@@ -824,6 +878,30 @@ class JowManager:
         return [w for w in words if len(w) >= 3 and w not in cls._STOP_WORDS_QUERY]
 
     @classmethod
+    def _title_keywords(cls, title: str) -> set[str]:
+        """Mots-clés d'un titre de recette, génériques exclus.
+
+        « Curry de lentilles corail » -> {curry, lentilles, corail}.
+        Utilisé pour la diversité : deux plats partageant un mot-clé
+        fort sont considérés comme proches.
+        """
+        words = re.findall(r"[a-zàâäéèêëîïôöùûüçœ]+", (title or "").lower())
+        return {w for w in words if len(w) >= 4 and w not in _GENERIC_WORDS}
+
+    @classmethod
+    def _too_similar(cls, candidate_name: str, recent_names: list[str]) -> str | None:
+        """Retourne le mot-clé fort partagé si la candidate ressemble trop
+        à un plat récent (même curry, risotto, tajine…), sinon None."""
+        cand = cls._title_keywords(candidate_name)
+        if not cand:
+            return None
+        for recent in recent_names:
+            shared = cand & cls._title_keywords(recent)
+            if shared:
+                return shared.pop()
+        return None
+
+    @classmethod
     def _rerank_on_query(cls, recipes: list[dict], query: str) -> list[dict]:
         """Re-trie les recettes selon la correspondance titre/description
         avec les mots-clés de la requête.
@@ -953,7 +1031,9 @@ class JowManager:
                 kept.append(item)
         self.shopping = kept
 
-        # Retirer le repas du planning
+        # Retirer le repas du planning. meal_done ne passe PAS par
+        # _remember_rejected : le plat a été mangé (donc apprécié a
+        # priori) — l'anti-répétition standard (4 semaines) suffit.
         self.plan.pop(day.isoformat(), None)
         await self.async_save()
 
@@ -1247,14 +1327,42 @@ class JowManager:
             if meal and meal.get("id") and day_iso >= cutoff and not meal.get("_no_exclude"):
                 # (les repas marqués _no_exclude sont retirés de l'anti-répétition)
                 deja_planifies.add(meal["id"])
-        if deja_planifies:
+
+        # Exclure les plats REJETÉS (effacés sans être marqués faits) :
+        # même absents du planning, ils ne doivent pas revenir pendant
+        # REJECT_MEMORY_DAYS — sinon la suggestion suivante les reproposait.
+        rejected_ids = {r["id"] for r in self.rejected}
+        excluded_ids = deja_planifies | rejected_ids
+        if excluded_ids:
             avant = len(recipes)
-            recipes = [r for r in recipes if r.get("id") not in deja_planifies]
+            recipes = [r for r in recipes if r.get("id") not in excluded_ids]
             _LOGGER.info(
-                "Recettes dédupliquées : %d exclues, %d restantes",
+                "Recettes dédupliquées : %d exclues (%d rejets), %d restantes",
                 avant - len(recipes),
+                len(rejected_ids & {r.get("id") for r in recipes}) if recipes else 0,
                 len(recipes),
             )
+
+        # Diversité du CHOIX : au-delà des ids, écarter les plats trop
+        # similaires aux derniers planifiés/rejetés — deux plats partageant
+        # un mot-clé fort (curry, risotto, tajine, lasagnes…) sont perçus
+        # comme « le même plat » par l'utilisateur. La similarité n'est
+        # appliquée qu'à la marge (si des candidates différentes restent),
+        # jamais au point de vider la liste.
+        if recipes:
+            window = [r.get("name", "") for r in self.rejected[:_SIMILAR_WINDOW]]
+            window += [
+                meal.get("name", "")
+                for day_iso, meal in sorted(self.plan.items(), reverse=True)[:_SIMILAR_WINDOW]
+                if meal
+            ]
+            distinct = [r for r in recipes if not self._too_similar(r.get("name", ""), window)]
+            if distinct and len(distinct) < len(recipes):
+                _LOGGER.info(
+                    "Diversité : %d/%d recettes trop proches des plats récents écartées",
+                    len(recipes) - len(distinct), len(recipes),
+                )
+                recipes = distinct
 
         # Filtrer les recettes contenant des ingrédients interdits
         # (allergies Jow + liste manuelle banned_ingredients) — AVANT le

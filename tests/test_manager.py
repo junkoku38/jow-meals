@@ -317,6 +317,84 @@ def test_suggest_max_total_time_hard_filter():
 
 
 # ---------------------------------------------------------------------------
+# Rejets persistants + diversité des mots-clés
+# ---------------------------------------------------------------------------
+
+def test_clear_meal_remembers_rejection():
+    """Effacer un plat (non mangé) l'enregistre comme rejet : il ne doit
+    plus revenir dans les suggestions, même absent du planning."""
+    m = _manager()
+    import asyncio
+    from datetime import date as _date
+
+    lundi = m.week_dates(0)[0]
+    m.plan[lundi.isoformat()] = {"id": "curry1", "name": "Curry de lentilles"}
+    asyncio.run(m.async_clear_meal(lundi))
+    assert lundi.isoformat() not in m.plan
+    assert any(r["id"] == "curry1" for r in m.rejected)
+
+    # Le plat rejeté est exclu d'une suggestion ultérieure
+    api = [
+        {"id": "curry1", "title": "Curry de lentilles"},
+        {"id": "autre", "title": "Bœuf carottes"},
+    ]
+
+    async def fake_search(q, limit=5, start=0):
+        return list(api)
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+    res = asyncio.run(m.async_suggest(criteria="plat", limit=5))
+    ids = [r["id"] for r in res]
+    assert "curry1" not in ids
+    assert "autre" in ids
+
+
+def test_too_similar_blocks_same_keyword_family():
+    """Deux plats partageant un mot-clé fort (curry) sont trop proches."""
+    assert JowManager._too_similar("Curry de poisson", ["Curry de lentilles"]) == "curry"
+    assert JowManager._too_similar("Risotto aux champignons", ["Curry de lentilles"]) is None
+    # mots génériques exclus : pas de similarité sur « recette »/« facile »
+    assert JowManager._too_similar("Recette facile de poisson", ["Plat facile du dimanche"]) is None
+
+
+def test_suggest_diversity_drops_same_family_at_margin():
+    """Les plats trop proches des récents sont écartés — mais seulement
+    si des candidates différentes restent (jamais vider la liste)."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""
+    m.plan = {}
+    m.rejected = [{"id": "old", "name": "Curry de lentilles", "ts": 1}]
+    import asyncio
+
+    api = [
+        {"id": "c1", "title": "Curry de poulet"},
+        {"id": "c2", "title": "Curry de légumes"},
+        {"id": "w1", "title": "Wok de nouilles"},
+    ]
+
+    async def fake_search(q, limit=5, start=0):
+        return list(api)
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+
+    res = asyncio.run(m.async_suggest(criteria="plat", limit=5))
+    ids = [r["id"] for r in res]
+    # les curries (même mot-clé que le rejet récent) sont écartés,
+    # le wok survit
+    assert "w1" in ids
+    assert "c1" not in ids and "c2" not in ids
+
+
+# ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------
 
