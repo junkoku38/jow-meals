@@ -715,3 +715,82 @@ recommendations:
       description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
       selector:
         text:
+
+# ---------------------------------------------------------------------------
+# Commande d'ingrédients (partenaires Jow) — refonte v1.0
+# ATTENTION : ces services touchent de vrais achats. Le paiement exige
+# confirm: true explicite — impossible par automatisation par accident.
+# ---------------------------------------------------------------------------
+order_providers:
+  name: Fournisseurs de courses disponibles
+  description: >-
+    Liste les partenaires de commande (Intermarché, Carrefour…) selon
+    votre zone. Lecture seule.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+order_slots:
+  name: Créneaux de livraison
+  description: >-
+    Créneaux de livraison/retrait du magasin configuré sur votre compte
+    jow.fr. Si aucun magasin n'est configuré, la réponse indique l'aide.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+order_cart:
+  name: Préparer le panier fournisseur
+  description: >-
+    Ajoute les ingrédients de la liste ouverte Jow au panier du magasin
+    partenaire. Sans engagement : aucune commande ni paiement. Répond
+    avec le nombre d'articles et le total estimé.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+order_create:
+  name: Créer la commande (non payée)
+  description: >-
+    Crée la commande chez le fournisseur à partir du menu Jow — visible
+    dans votre compte jow.fr, en attente de paiement. Nécessite un
+    magasin configuré et un panier préparé (order_cart).
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+order_pay:
+  name: PAYER la commande (irréversible)
+  description: >-
+    ⚠️ DÉCLENCHE UN PAIEMENT RÉEL. Exige confirm: true écrit
+    explicitement dans l'appel — aucune automatisation ne peut payer
+    par accident. Utilisez d'abord order_create, vérifiez le total,
+    puis payez.
+  fields:
+    order_id:
+      name: ID de commande
+      description: Identifiant retourné par order_create.
+      required: true
+      selector:
+        text:
+    confirm:
+      name: Je confirme le paiement
+      description: >-
+        Doit être true explicitement. Le service refuse sinon — c'est le
+        garde-fou anti-automatisation accidentelle.
+      required: true
+      default: false
+      selector:
+        boolean:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:

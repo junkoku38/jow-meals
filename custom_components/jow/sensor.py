@@ -29,6 +29,9 @@ async def async_setup_entry(
     )
     entities.append(JowTodaySensor(manager, entry))
     entities.append(JowExpiringSensor(manager, entry))
+    entities.append(JowSyncSensor(manager, entry))
+    entities.append(JowAccountSensor(manager, entry))
+    entities.append(JowCartSensor(manager, entry))
     async_add_entities(entities)
 
 
@@ -208,3 +211,14 @@ class JowExpiringSensor(SensorEntity):
             "horizon_days": 3,
             "most_urgent": exp[0]["ingredient"] if exp else None,
         }
+
+
+# ---------------------------------------------------------------------------
+# Capteurs d'état (refonte v1.0) : synchro / compte / panier — définis
+# dans state.py, branchés ici pour partager la plateforme sensor.
+# ---------------------------------------------------------------------------
+from .state import (  # noqa: E402
+    JowAccountSensor,
+    JowCartSensor,
+    JowSyncSensor,
+)

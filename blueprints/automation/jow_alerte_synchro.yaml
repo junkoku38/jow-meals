@@ -1,0 +1,32 @@
+blueprint:
+  name: Jow - Alerte token / synchro
+  description: >-
+    Prévient quand la connexion au compte Jow se dégrade (token expiré,
+    refresh refusé) pour agir avant de perdre la synchro. S'appuie sur
+    sensor.jow_synchro.
+  domain: automation
+  input:
+    notify_service:
+      name: Service de notification
+      selector:
+        text:
+
+trigger:
+  - platform: state
+    entity_id: sensor.jow_synchro
+    to: "token_expiré"
+    for: "00:30:00"
+  - platform: state
+    entity_id: sensor.jow_compte
+    to: "à rafraîchir"
+    for: "00:30:00"
+
+action:
+  - service: !input notify_service
+    data:
+      title: ⚠️ Jow — synchro dégradée
+      message: >-
+        Le compte Jow n'arrive plus à se synchroniser
+        (état : {{ states('sensor.jow_synchro') }}).
+        Vérifiez le refresh token : Paramètres → Appareils & services → Jow → Configurer.
+mode: single

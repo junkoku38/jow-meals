@@ -44,6 +44,11 @@ from .const import (
     SERVICE_GET_CONTEXT,
     SERVICE_IMPORT_MENU,
     SERVICE_MEAL_DONE,
+    SERVICE_ORDER_CART,
+    SERVICE_ORDER_CREATE,
+    SERVICE_ORDER_PAY,
+    SERVICE_ORDER_PROVIDERS,
+    SERVICE_ORDER_SLOTS,
     SERVICE_PLAN_MEAL,
     SERVICE_RECOMMENDATIONS,
     SERVICE_REFRESH_SHOPPING_LIST,
@@ -62,7 +67,9 @@ from .manager import JowManager, _recipe_to_dict
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.TODO]
+PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.TODO, Platform.CALENDAR]
+# state.py expose des sensors supplémentaires via la plateforme sensor :
+# enregistrés par sensor.py via un import (pas une plateforme séparée).
 
 
 def _get_manager(hass: HomeAssistant, call: ServiceCall, default_manager: JowManager) -> JowManager:
@@ -415,6 +422,53 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return {"recipes": recipes, "count": len(recipes)}
 
+    async def handle_order_providers(call: ServiceCall) -> ServiceResponse:
+        """Liste les fournisseurs de courses partenaires (Intermarché…)."""
+        mgr = _get_manager(hass, call, manager)
+        from .order import JowOrderManager
+
+        om = JowOrderManager(mgr.api_client())
+        providers = await om.get_providers()
+        return {"providers": [
+            {k: p.get(k) for k in ("id", "name", "deliverySubtitle", "disabled")}
+            for p in providers
+        ]}
+
+    async def handle_order_slots(call: ServiceCall) -> ServiceResponse:
+        """Créneaux de livraison du magasin configuré."""
+        mgr = _get_manager(hass, call, manager)
+        from .order import JowOrderManager
+
+        om = JowOrderManager(mgr.api_client())
+        return await om.get_delivery_slots()
+
+    async def handle_order_cart(call: ServiceCall) -> ServiceResponse:
+        """Prépare le panier fournisseur depuis la liste ouverte (sans paiement)."""
+        mgr = _get_manager(hass, call, manager)
+        from .order import JowOrderManager
+
+        om = JowOrderManager(mgr.api_client())
+        return await om.prepare_cart_from_menu()
+
+    async def handle_order_create(call: ServiceCall) -> ServiceResponse:
+        """Crée la commande (non payée) — visible sur jow.fr."""
+        mgr = _get_manager(hass, call, manager)
+        from .order import JowOrderManager
+
+        om = JowOrderManager(mgr.api_client())
+        return await om.create_order()
+
+    async def handle_order_pay(call: ServiceCall) -> ServiceResponse:
+        """PAIEMENT RÉEL — exige confirm: true explicite (aucune automatisation possible sans)."""
+        mgr = _get_manager(hass, call, manager)
+        from .order import JowOrderManager
+
+        om = JowOrderManager(mgr.api_client())
+        return await om.pay_order(
+            order_id=call.data.get("order_id", ""),
+            confirm=call.data.get("confirm", False),
+        )
+
     async def handle_import_menu(call: ServiceCall) -> ServiceResponse:
         """Importe le menu de la semaine depuis le compte Jow (app/mobile)."""
         mgr = _get_manager(hass, call, manager)
@@ -456,6 +510,35 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ORDER_PROVIDERS, handle_order_providers,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ORDER_SLOTS, handle_order_slots,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ORDER_CART, handle_order_cart,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ORDER_CREATE, handle_order_create,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ORDER_PAY, handle_order_pay,
+        schema=vol.Schema({
+            vol.Required("order_id"): cv.string,
+            vol.Required("confirm", default=False): cv.boolean,
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_RECOMMENDATIONS, handle_recommendations,
@@ -667,6 +750,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_EXPIRING,
                 SERVICE_RENEW_WEEK,
                 SERVICE_RECOMMENDATIONS,
+                SERVICE_ORDER_PROVIDERS,
+                SERVICE_ORDER_SLOTS,
+                SERVICE_ORDER_CART,
+                SERVICE_ORDER_CREATE,
+                SERVICE_ORDER_PAY,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,

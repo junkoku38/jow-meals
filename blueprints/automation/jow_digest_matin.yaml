@@ -1,0 +1,49 @@
+blueprint:
+  name: Jow - Digest du matin
+  description: >-
+    Chaque matin, notifie le repas du soir (plat, temps de préparation,
+    calories) et les ingrédients périssables à sauver. S'appuie sur les
+    capteurs jow créés par l'intégration.
+  domain: automation
+  input:
+    notify_service:
+      name: Service de notification
+      description: Ex. notify.mobile_app_mon_tel
+      selector:
+        text:
+    heure:
+      name: Heure d'envoi
+      default: "08:00:00"
+      selector:
+        time: {}
+    expiring_horizon:
+      name: Jours d'horizon péremption
+      default: 3
+      selector:
+        number:
+          min: 1
+          max: 7
+
+trigger:
+  - platform: time
+    at: !input heure
+
+action:
+  - variables:
+      repas: "{{ states('sensor.jow_repas_du_jour') }}"
+      preparation: "{{ state_attr('sensor.jow_repas_du_jour', 'preparation_time') }}"
+      calories: "{{ state_attr('sensor.jow_repas_du_jour', 'calories') }}"
+      perissables: "{{ state_attr('sensor.jow_ingredients_a_sauver', 'expiring') }}"
+  - service: !input notify_service
+    data:
+      title: 🍽 Menu du jour
+      message: >-
+        {{ 'Ce soir : ' ~ repas if repas not in ['unknown', 'unavailable', 'Rien de prévu']
+           else 'Rien de prévu ce soir — pense à planifier !' }}
+        {% if preparation %} ({{ preparation }} min de préparation){% endif %}
+        {% if calories %} · {{ calories }} kcal/pers{% endif %}
+
+        {% if perissables | length > 0 %}
+        ⏰ À sauver : {{ perissables | map(attribute='ingredient') | join(', ') }}
+        {% endif %}
+mode: single

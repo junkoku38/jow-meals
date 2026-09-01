@@ -2021,29 +2021,30 @@ class JowManager:
     ) -> requests.Response | None:
         """GET authentifié avec refresh automatique sur 401.
 
-        Les routes user (profile, favorites, shoppinglist) refusent
-        l'access token après ~48 h ; un 401 ne doit pas se solder en
-        liste vide silencieuse mais déclencher un refresh (le refresh
-        token vit ~6 mois) puis UNE nouvelle tentative.
+        Délègue au JowClient (api.py) depuis la refonte v1.0 — la façade
+        est conservée pour les appelants historiques et les tests.
         """
         if not self.jow_token:
             return None
+        return await self.api_client().get(url, params=params, timeout=timeout)
 
-        def _get(token: str) -> requests.Response:
-            return requests.get(
-                url,
-                headers={**self._jow_auth_headers(), "authorization": f"Bearer {token}"},
-                params=params or {},
-                timeout=timeout,
+    async def _async_on_token_refreshed(self, token: str) -> None:
+        """Callback du client : met à jour le token en mémoire + entry."""
+        self.jow_token = token
+        await self._async_persist_tokens()
+
+    def api_client(self):
+        """JowClient partagé de l'instance (créé à la demande)."""
+        from .api import JowClient
+
+        if getattr(self, "_api_client", None) is None:
+            self._api_client = JowClient(
+                self.hass,
+                get_access_token=lambda: self.jow_token,
+                get_refresh_token=lambda: self.jow_refresh_token,
+                on_token_refreshed=self._async_on_token_refreshed,
             )
-
-        resp = await self.hass.async_add_executor_job(_get, self.jow_token)
-        if resp.status_code == 401 and self.jow_refresh_token:
-            _LOGGER.info("401 sur %s — rafraîchissement du token Jow", url)
-            refreshed = await self.async_refresh_jow_token()
-            if refreshed:
-                resp = await self.hass.async_add_executor_job(_get, self.jow_token)
-        return resp
+        return self._api_client
 
     async def async_refresh_jow_token(self) -> bool:
         """Rafraîchit l'access token JWT Jow via le refresh token.

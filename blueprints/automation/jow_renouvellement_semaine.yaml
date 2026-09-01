@@ -1,0 +1,43 @@
+blueprint:
+  name: Jow - Anti-gaspillage du dimanche
+  description: >-
+    Le dimanche soir : suggère des recettes pour écouler les ingrédients
+    périssables restants (mode rescue) sur les jours vides de la semaine
+    prochaine, puis régénère la liste de courses. Notifie le résultat.
+  domain: automation
+  input:
+    notify_service:
+      name: Service de notification
+      selector:
+        text:
+    jour:
+      name: Jour de déclenchement
+      default: "18:00:00"
+      selector:
+        time: {}
+
+trigger:
+  - platform: time
+    at: !input jour
+
+condition:
+  - condition: template
+    value_template: "{{ now().weekday() == 6 }}"  # dimanche
+
+action:
+  - service: jow.renew_week
+    data:
+      week_offset: 1
+    response_variable: renouvellement
+  - service: jow.refresh_shopping_list
+    data:
+      week_offset: 1
+      keep_checked: true
+  - service: !input notify_service
+    data:
+      title: 🎲 Semaine prochaine renouvelée
+      message: >-
+        {{ renouvellement.planned }} nouveaux plats planifiés
+        {% if renouvellement.failures %}({{ renouvellement.failures | length }} échecs){% endif %}.
+        Liste de courses régénérée.
+mode: single

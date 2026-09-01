@@ -78,8 +78,29 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 |---|---|
 | `sensor.jow_lundi` … `sensor.jow_dimanche` | Nom de la recette du jour, `entity_picture` = vignette, attributs `url`, `ingredients`, `preparation_time`, `cooking_time`, `covers`, `date` |
 | `sensor.jow_repas_du_jour` | Idem, pour la date du jour |
+| `sensor.jow_ingredients_a_sauver` | Ingrédients périssables expirant sous 3 jours (anti-gaspillage, mode rescue) |
+| `sensor.jow_synchro` | Santé de la connexion jow.fr (`ok` / `token_expiré` / `sans_compte`) + attributs de divergence — base d'alertes |
+| `sensor.jow_compte` | Compte connecté, allergies/préférences synchronisées, agent IA |
+| `sensor.jow_panier_jow` | Panier/liste ouverte côté jow.fr |
+| `calendar.jow_menu` | **Le menu comme calendrier HA** — un événement par repas (19:00), automatisable nativement |
 | `todo.jow_courses` | Liste de courses, cochable, éditable |
 | `todo.jow_liste_approuvee` | Articles à toujours acheter (hors planning), fusionnés automatiquement avec `todo.jow_courses` lors du `refresh_shopping_list` |
+
+## Commande d'ingrédients (partenaires)
+
+Chaîne de services (⚠️ les derniers touchent de vrais achats) :
+1. `jow.order_providers` — fournisseurs disponibles (lecture)
+2. `jow.order_slots` — créneaux du magasin configuré (lecture)
+3. `jow.order_cart` — ajoute les ingrédients du menu au panier fournisseur (sans engagement)
+4. `jow.order_create` — crée la commande **non payée** (visible sur jow.fr)
+5. `jow.order_pay` — **PAIEMENT RÉEL** : exige `confirm: true` explicite — aucune automatisation ne peut payer par accident
+
+## Blueprints d'automatisation
+
+Trois blueprints prêts à importer (Blueprints →Importer un blueprint, URL du fichier) :
+- **`jow_digest_matin`** — notification du matin : repas du soir, temps, kcal, périssables à sauver
+- **`jow_alerte_synchro`** — prévient quand le token/synchro se dégrade (agir avant de tout perdre)
+- **`jow_renouvellement_semaine`** — dimanche soir : renouvelle la semaine prochaine + régénère les courses + notifie
 
 ## Services
 
