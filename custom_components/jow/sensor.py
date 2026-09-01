@@ -41,7 +41,13 @@ class JowBaseSensor(SensorEntity):
         self._manager = manager
         # Nom d'instance (multi-instance) ou "Jow" par défaut : évite les
         # sensor.jow_lundi_2, _3… quand l'utilisateur nomme ses instances.
-        instance_name = (entry.data.get("name") or entry.title or "Jow").strip() or "Jow"
+        # (le nom peut venir de la config initiale ou des options)
+        instance_name = (
+            entry.options.get("name")
+            or entry.data.get("name")
+            or entry.title
+            or "Jow"
+        ).strip() or "Jow"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
             name=instance_name,

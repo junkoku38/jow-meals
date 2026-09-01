@@ -21,6 +21,7 @@
     "step": {
       "init": {
         "data": {
+          "name": "Nom de l'instance",
           "covers": "Couverts par défaut",
           "allergies": "Allergies / interdits",
           "preferences": "Préférences",

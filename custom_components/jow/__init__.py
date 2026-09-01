@@ -2,29 +2,29 @@
 
 from __future__ import annotations
 
-import logging
 from datetime import date, datetime
+import logging
 
-import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse
 from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 from .const import (
     ATTR_CHOICE,
     ATTR_COVERS,
     ATTR_CRITERIA,
     ATTR_DATE,
+    ATTR_ENTRY_NAME,
+    ATTR_INGREDIENT,
     ATTR_LIMIT,
     ATTR_QUERY,
+    ATTR_TO_DATE,
+    ATTR_TO_WEEK_OFFSET,
+    ATTR_TO_WEEKDAY,
     ATTR_WEEK_OFFSET,
     ATTR_WEEKDAY,
-    ATTR_ENTRY_NAME,
-    ATTR_TO_DATE,
-    ATTR_TO_WEEKDAY,
-    ATTR_TO_WEEK_OFFSET,
-    ATTR_INGREDIENT,
     CONF_AI_ENTITY,
     CONF_ALLERGIES,
     CONF_JOW_REFRESH_TOKEN,
@@ -33,25 +33,25 @@ from .const import (
     CONF_WEATHER_ENTITY,
     DEFAULT_COVERS,
     DOMAIN,
+    SERVICE_ADD_AVOID,
+    SERVICE_ADD_BANNED,
     SERVICE_CLEAR_MEAL,
+    SERVICE_CLEAR_RECENT,
     SERVICE_CLEAR_WEEK,
+    SERVICE_COPY_MEAL,
+    SERVICE_EXCLUDE_INGREDIENT,
+    SERVICE_GET_CONTEXT,
+    SERVICE_MEAL_DONE,
     SERVICE_PLAN_MEAL,
     SERVICE_REFRESH_SHOPPING_LIST,
     SERVICE_SEARCH,
+    SERVICE_SEND_MENU,
+    SERVICE_SET_COVERS,
     SERVICE_SUGGEST,
+    SERVICE_SYNC_CALORIES,
     SERVICE_SYNC_FAVORITES,
     SERVICE_SYNC_PREFERENCES,
-    SERVICE_MEAL_DONE,
     SERVICE_SYNC_PROFILE,
-    SERVICE_SYNC_CALORIES,
-    SERVICE_SEND_MENU,
-    SERVICE_COPY_MEAL,
-    SERVICE_SET_COVERS,
-    SERVICE_EXCLUDE_INGREDIENT,
-    SERVICE_GET_CONTEXT,
-    SERVICE_CLEAR_RECENT,
-    SERVICE_ADD_AVOID,
-    SERVICE_ADD_BANNED,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -78,7 +78,11 @@ def _get_manager(hass: HomeAssistant, call: ServiceCall, default_manager: JowMan
         return default_manager
     for entry_id, manager in instances.items():
         entry = hass.config_entries.async_get_entry(entry_id)
-        if entry and (entry.title == entry_name or entry.data.get("name") == entry_name):
+        if entry and (
+            entry.title == entry_name
+            or entry.data.get("name") == entry_name
+            or entry.options.get("name") == entry_name
+        ):
             return manager
     _LOGGER.warning("Instance Jow « %s » introuvable, utilisation de l'instance par défaut", entry_name)
     for entry_id in instances:
@@ -284,7 +288,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_get_context(call: ServiceCall) -> ServiceResponse:
         """Retourne le contexte IA complet (allergies, préférences, plats récents)."""
         mgr = _get_manager(hass, call, manager)
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
+        from datetime import timedelta as _td
         cutoff = (_date.today() - _td(weeks=4)).isoformat()
         recent = []
         for day_iso, meal in mgr.plan.items():

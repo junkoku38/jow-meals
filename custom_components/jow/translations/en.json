@@ -15,12 +15,15 @@
         }
       }
     },
-    "abort": { "already_configured": "Jow is already configured." }
+    "abort": {
+      "already_configured": "Jow is already configured."
+    }
   },
   "options": {
     "step": {
       "init": {
         "data": {
+          "name": "Instance name",
           "covers": "Default covers",
           "allergies": "Allergies / restrictions",
           "preferences": "Preferences",

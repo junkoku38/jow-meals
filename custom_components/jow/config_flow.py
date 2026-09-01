@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, OptionsFlow
 from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.selector import TextSelector, TextSelectorConfig, TextSelectorType
+import voluptuous as vol
 
 from .const import (
     CONF_AI_ENTITY,
@@ -83,6 +83,10 @@ class JowOptionsFlow(OptionsFlow):
             step_id="init",
             data_schema=vol.Schema(
                 {
+                    vol.Optional(
+                        "name",
+                        default=opts.get("name", self.config_entry.data.get("name", "Jow")),
+                    ): cv.string,
                     vol.Required("covers", default=opts.get("covers", DEFAULT_COVERS)): vol.All(
                         vol.Coerce(int), vol.Range(min=1, max=12)
                     ),

@@ -2,27 +2,26 @@
 
 from __future__ import annotations
 
+import contextlib
+import copy
+from datetime import date, timedelta
 import json
 import logging
 import re
-import uuid
-from datetime import date, timedelta
 from typing import Any
 from urllib.parse import urlparse
-
-import requests
+import uuid
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
+import requests
 
 from .const import (
     CONF_JOW_REFRESH_TOKEN,
     CONF_JOW_TOKEN,
     DEFAULT_COVERS,
-    DOMAIN,
     JOW_AUTH_REFRESH_URL,
-    JOW_AUTH_URL,
     JOW_FAVORITES_URL,
     JOW_MENU_URL,
     JOW_PROFILE_URL,
@@ -459,6 +458,9 @@ class JowManager:
 
     # ------------------------------------------------------------------
     # Appels à Jow (bloquants -> executor)
+    # Note : `requests` synchrone dans l'executor est un pattern supporté
+    # par HA ; une migration aiohttp est envisageable mais ces chemins
+    # (auth, favoris, envoi menu) ne sont pas couverts par les tests.
     # ------------------------------------------------------------------
     async def async_search(self, query: str, limit: int = 5) -> list[dict]:
         """Recherche des recettes sur Jow via l'API HTTP directe."""
@@ -564,8 +566,6 @@ class JowManager:
             return None
         # Copie profonde : évite que modifier un jour (set_covers, etc.)
         # modifie aussi l'autre par effet d'aliasing.
-        import copy
-
         self.plan[to_day.isoformat()] = copy.deepcopy(meal)
         await self.async_save()
         async_dispatcher_send(self.hass, self.update_signal)
@@ -582,10 +582,8 @@ class JowManager:
         for ing in meal.get("ingredients", []):
             qpc = ing.get("quantity_per_cover")
             if qpc is not None:
-                try:
+                with contextlib.suppress(TypeError, ValueError):
                     ing["quantity"] = round(float(qpc) * covers, 2)
-                except (TypeError, ValueError):
-                    pass
         await self.async_save()
         async_dispatcher_send(self.hass, self.update_signal)
         return {"covers": covers, "day": day.isoformat()}
@@ -602,11 +600,9 @@ class JowManager:
         kept = []
         for item in self.shopping:
             summary_norm = self._norm(item["summary"])
-            item_name = summary_norm
-            if " de " in item_name:
-                item_name = item_name.split(" de ", 1)[1]
-            else:
-                item_name = self._strip_quantity(item_name)
+            item_name = (
+                summary_norm.split(" de ", 1)[1] if " de " in summary_norm else self._strip_quantity(summary_norm)
+            )
             if norm in (item_name, summary_norm):
                 removed.append(item["summary"])
             else:
@@ -678,7 +674,7 @@ class JowManager:
             return_exceptions=True,
         )
         updated = 0
-        for (day, meal, _), calories in zip(pending, results):
+        for (_day, meal, _), calories in zip(pending, results, strict=False):
             if isinstance(calories, Exception) or calories is None:
                 continue
             meal["calories"] = calories
@@ -807,7 +803,7 @@ class JowManager:
 
     def _sort_by_aisle(self, lines: list[str]) -> list[str]:
         """Trie la liste de courses par rayon (Fruits & Légumes, Boucherie, etc.)."""
-        return sorted(lines, key=lambda l: (_AISLE_ORDER.index(_aisle_for(l)), l.lower()))
+        return sorted(lines, key=lambda ligne: (_AISLE_ORDER.index(_aisle_for(ligne)), ligne.lower()))
 
     async def async_add_item(self, summary: str) -> None:
         if len(self.shopping) >= _MAX_ITEMS:
@@ -898,11 +894,9 @@ class JowManager:
             summary_norm = self._norm(item["summary"])
             # Extraction du nom d'ingrédient : "200 g de riz" -> "riz",
             # "200 g riz" -> "riz", "riz" -> "riz"
-            item_name = summary_norm
-            if " de " in item_name:
-                item_name = item_name.split(" de ", 1)[1]
-            else:
-                item_name = self._strip_quantity(item_name)
+            item_name = (
+                summary_norm.split(" de ", 1)[1] if " de " in summary_norm else self._strip_quantity(summary_norm)
+            )
             if item_name in done_ingredients or summary_norm in done_ingredients:
                 removed.append(item["summary"])
             else:
@@ -971,7 +965,8 @@ class JowManager:
             constraints += f"Demande : {criteria}. "
 
         # Recettes récentes à éviter pour la diversité
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
+        from datetime import timedelta as _td
         cutoff = (_date.today() - _td(weeks=4)).isoformat()
         recent_names = []
         for day_iso, meal in self.plan.items():
@@ -1003,7 +998,7 @@ class JowManager:
         query = ""
         criteria_words = (criteria or "").strip().split()
         is_long_phrase = len(criteria_words) > 5
-        
+
         # Si phrase longue, l'IA raisonne pour proposer une requête pertinente
         if is_long_phrase and ai_ent:
             instructions = (
@@ -1020,7 +1015,7 @@ class JowManager:
                 "JAMAIS de boisson, cocktail ou apéritif. "
                 "Réponds uniquement avec la requête de recherche."
             )
-        
+
         if ai_ent:
             try:
                 # Timeout explicite : un agent IA qui pend ne doit pas
@@ -1081,14 +1076,14 @@ class JowManager:
         # Exclure les recettes déjà planifiées dans les 4 dernières semaines
         # (au lieu de tout l'historique) pour éviter les répétitions récentes
         # tout en laissant revenir les plats après un mois.
-        from datetime import date as _date, timedelta as _td
+        from datetime import date as _date
+        from datetime import timedelta as _td
         cutoff = (_date.today() - _td(weeks=4)).isoformat()
         deja_planifies = set()
         for day_iso, meal in self.plan.items():
-            if meal and meal.get("id") and day_iso >= cutoff:
-                # Ignorer les repas marqués _no_exclude (retirés de l'anti-répétition)
-                if not meal.get("_no_exclude"):
-                    deja_planifies.add(meal["id"])
+            if meal and meal.get("id") and day_iso >= cutoff and not meal.get("_no_exclude"):
+                # (les repas marqués _no_exclude sont retirés de l'anti-répétition)
+                deja_planifies.add(meal["id"])
         if deja_planifies:
             avant = len(recipes)
             recipes = [r for r in recipes if r.get("id") not in deja_planifies]
@@ -1138,7 +1133,6 @@ class JowManager:
         # — sauf si ce jour est déjà planifié (la suggestion ne doit pas
         # écraser silencieusement un repas existant).
         if weekday and weekday in WEEKDAYS and recipes:
-            from datetime import date
             day_idx = WEEKDAYS.index(weekday)
             target_date = self.week_dates(week_offset)[day_idx]
             if self.plan.get(target_date.isoformat()):
@@ -1424,7 +1418,7 @@ class JowManager:
         tasks = [self.hass.async_add_executor_job(_send, rid) for rid in recipe_ids]
         statuses = await asyncio.gather(*tasks, return_exceptions=True)
         sent = 0
-        for rid, status in zip(recipe_ids, statuses):
+        for rid, status in zip(recipe_ids, statuses, strict=False):
             if isinstance(status, Exception):
                 _LOGGER.warning("Envoi recette %s à Jow échoué : %s", rid, status)
             elif status in (200, 204):

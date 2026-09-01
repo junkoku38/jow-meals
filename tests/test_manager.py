@@ -83,6 +83,74 @@ def _manager() -> JowManager:
     return m
 
 
+class _FakeStore:
+    """Store jouable pour tester la persistance et la migration legacy."""
+
+    def __init__(self, hass, version, key, data=None):
+        self.key = key
+        self._data = data
+
+    async def async_load(self):
+        return self._data
+
+    async def async_save(self, data):
+        self._data = data
+
+
+def _manager_with_stores(new_data=None, legacy_data=None):
+    """Manager avec des stores réels factices (clé par instance + legacy)."""
+    m = JowManager(MagicMock(), 2, entry_id="abc123")
+    m._store = _FakeStore(None, 1, "jow.data.abc123", new_data)
+    m._legacy_store = _FakeStore(None, 1, "jow.data", legacy_data)
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Migration storage legacy (jow.data -> jow.data.<entry_id>)
+# ---------------------------------------------------------------------------
+
+def test_load_migrates_legacy_storage():
+    legacy = {
+        "plan": {"2026-08-20": {"name": "curry"}},
+        "shopping": [{"uid": "1", "summary": "200 g riz", "done": False}],
+        "banned_ingredients": ["céleri"],
+    }
+    m = _manager_with_stores(new_data=None, legacy_data=legacy)
+    import asyncio
+
+    asyncio.run(m.async_load())
+    assert m.plan == {"2026-08-20": {"name": "curry"}}
+    assert m.shopping == [{"uid": "1", "summary": "200 g riz", "done": False}]
+    assert m.banned_ingredients == ["céleri"]
+
+
+def test_load_prefers_instance_data_over_legacy():
+    inst = {"plan": {"2026-08-25": {"name": "paella"}}}
+    legacy = {"plan": {"2026-08-20": {"name": "curry"}}}
+    m = _manager_with_stores(new_data=inst, legacy_data=legacy)
+    import asyncio
+
+    asyncio.run(m.async_load())
+    assert m.plan == {"2026-08-25": {"name": "paella"}}
+
+
+def test_load_survives_empty_stores():
+    m = _manager_with_stores(new_data=None, legacy_data=None)
+    import asyncio
+
+    asyncio.run(m.async_load())
+    assert m.plan == {} and m.shopping == []
+
+
+def test_save_persists_favorites():
+    m = _manager_with_stores(new_data=None, legacy_data=None)
+    import asyncio
+
+    m.favorites = [{"name": "carbonara", "calories": 650}]
+    asyncio.run(m.async_save())
+    assert m._store._data["favorites"] == [{"name": "carbonara", "calories": 650}]
+
+
 # ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------
