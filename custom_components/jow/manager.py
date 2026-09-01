@@ -450,6 +450,10 @@ class JowManager:
         # les services de synchro (import_menu/send_menu/meal_done),
         # lu par le capteur d'état « Plats dans Jow ».
         self.jow_open_meals: list[dict] = []
+        # Statistiques de synchro (capteur d'état / alertes) :
+        # dates et compteurs des derniers import/export menu.
+        self.last_import: dict | None = None   # {"ts": iso, "imported": n, "skipped": n}
+        self.last_send: dict | None = None     # {"ts": iso, "added": n}
 
     @property
     def update_signal(self) -> str:
@@ -938,9 +942,8 @@ class JowManager:
 
         Contrairement à letscook, cette route expose les quantités
         agrégées du menu Jow (y compris conversions d'unités
-        pré-calculées). Utilisé pour enrichir la liste HA quand le
-        planning provient en partie de plats importés (dont les
-        ingrédients ne sont pas stockés).
+        pré-calculées). API publique pour les évolutions de liste de
+        courses (aucun consommateur interne aujourd'hui).
         """
         resp = await self._async_jow_get(
             JOW_SHOPPING_URL, params={"availabilityZoneId": "FR"}
@@ -1792,7 +1795,16 @@ class JowManager:
         results = await self.async_search(query, limit=50)
         if len(results) == 50:
             second = await self.async_search(query, limit=50, start=50)
-            results.extend(r for r in second if r.get("id") not in {x.get("id") for x in results})
+            # dédoublonnage id OU _id (l'API expose les deux selon les
+            # endpoints — ne comparer que "id" écartait toute la page 2
+            # si elle ne portait que _id)
+            seen_ids = {
+                _safe_id(x.get("id") or x.get("_id")) for x in results
+            } - {None}
+            results.extend(
+                r for r in second
+                if _safe_id(r.get("id") or r.get("_id")) not in seen_ids
+            )
         # Repli natif : si la recherche textuelle ne trouve RIEN, le moteur
         # de recommandation Jow (/recipes/reco/more) propose des recettes
         # personnalisées — mieux qu'une liste vide, sans agent IA.
@@ -2047,9 +2059,15 @@ class JowManager:
             return None
         return await self.api_client().get(url, params=params, timeout=timeout)
 
-    async def _async_on_token_refreshed(self, token: str) -> None:
-        """Callback du client : met à jour le token en mémoire + entry."""
+    async def _async_on_token_refreshed(self, token: str, new_refresh: str | None = None) -> None:
+        """Callback du client : met à jour les tokens en mémoire + entry.
+
+        new_refresh : l'API peut faire tourner le refresh token à chaque
+        refresh — on persiste les deux pour ne pas perdre la rotation.
+        """
         self.jow_token = token
+        if new_refresh:
+            self.jow_refresh_token = new_refresh
         await self._async_persist_tokens()
 
     def api_client(self):
@@ -2294,10 +2312,18 @@ class JowManager:
         # 4) réécrire la liste ouverte avec l'union (cache mis à jour par le helper)
         status = await self._async_rewrite_open_list(body_meals)
         if status in (200, 201, 204):
+            from datetime import datetime as _dt
+            self.last_send = {
+                "ts": _dt.now().isoformat(timespec="seconds"),
+                "added": added,
+                "total_jow": len(body_meals),
+            }
             _LOGGER.info(
                 "Menu envoyé à Jow : %d plats ajoutés (liste réécrite avec %d au total)",
                 added, len(body_meals),
             )
+            # réveiller les capteurs d'état (cache jow_open_meals à jour)
+            async_dispatcher_send(self.hass, self.update_signal)
             return added
         _LOGGER.warning(
             "Réécriture de la liste Jow échouée (HTTP %s) — la liste existante est préservée",
@@ -2407,6 +2433,13 @@ class JowManager:
 
         if imported:
             await self.async_save()
+        from datetime import datetime as _dt
+        self.last_import = {
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "imported": imported,
+            "skipped": skipped_deja,
+            "remaining": len(eligible),
+        }
         _LOGGER.info(
             "Import menu Jow (letscook) : %d importés, %d écartés (déjà planifiés/rejetés), %d restants pour plus tard",
             imported, skipped_deja, len(eligible),
@@ -2432,6 +2465,12 @@ class JowManager:
         imported = 0
         skipped = 0
         week_keys = {d.isoformat(): d for d in self.week_dates(week_offset)}
+        # dédoublonnage global : tout le planning HA + les rejets
+        already_planned_ids = {
+            meal.get("id") for meal in self.plan.values()
+            if isinstance(meal, dict) and meal.get("id")
+        }
+        rejected_ids = {r.get("id") for r in self.rejected}
 
         def _try_import(date_iso: str | None, recipe: dict) -> None:
             nonlocal imported, skipped
@@ -2444,6 +2483,11 @@ class JowManager:
                 return
             # Ne pas écraser un repas déjà planifié ce jour-là en HA
             if self.plan.get(date_iso):
+                skipped += 1
+                return
+            # Dédoublonnage global (même garantie que le chemin letscook) :
+            # un plat déjà planifié ailleurs dans HA ou rejeté n'entre pas
+            if rid in already_planned_ids or rid in rejected_ids:
                 skipped += 1
                 return
             stored = _recipe_to_dict(recipe, self.default_covers)

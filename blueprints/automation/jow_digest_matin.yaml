@@ -33,7 +33,11 @@ action:
       repas: "{{ states('sensor.jow_repas_du_jour') }}"
       preparation: "{{ state_attr('sensor.jow_repas_du_jour', 'preparation_time') }}"
       calories: "{{ state_attr('sensor.jow_repas_du_jour', 'calories') }}"
-      perissables: "{{ state_attr('sensor.jow_ingredients_a_sauver', 'expiring') }}"
+      perissables: >-
+        {{ state_attr('sensor.jow_ingredients_a_sauver', 'expiring')
+           | selectattr('days_left', 'defined')
+           | selectattr('days_left', '<=', expiring_horizon | int)
+           | list }}
   - service: !input notify_service
     data:
       title: 🍽 Menu du jour

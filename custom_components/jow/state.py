@@ -1,16 +1,14 @@
 """Capteurs d'état Jow : synchro, compte, panier, défis.
 
-Ces capteurs donnent matière aux automatisations et alertes :
-- `sensor.jow_synchro` : santé de la connexion (état ok / token_expiré /
-  erreur_lecture), dates de dernière synchro menu, nombre de plats
-  importés/exportés, divergence HA↔Jow
-- `sensor.jow_compte` : profil (nom, email, jow+), préférences et
-  habitudes synchronisées
-- `sensor.jow_panier` : état du panier/liste ouverte côté jow.fr
-  (nombre de plats, ingrédients, total estimé si disponible)
+Capteurs d'état pour les automatisations et alertes :
+- sensor.jow_synchro : santé de la connexion (ok / token_expiré /
+  sans_compte) + dates et compteurs des dernières synchros menu +
+  divergence HA↔Jow (plats HA absents de la liste ouverte Jow)
+- sensor.jow_compte : connexion, allergies/préférences, agent IA
+- sensor.jow_plats_dans_jow : plats réels de la liste ouverte jow.fr
 
-Tous se réveillent sur le signal du manager + à minuit + après les
-services de synchro (les handlers déclenchent déjà le signal).
+Enregistrés par sensor.py (import), réveillés par le signal du manager
+et à minuit.
 """
 
 from __future__ import annotations
@@ -20,10 +18,9 @@ from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 
 from .const import DOMAIN
@@ -31,16 +28,6 @@ from .manager import JowManager
 
 _LOGGER = logging.getLogger(__name__)
 
-
-async def async_setup_entry(
-    hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
-) -> None:
-    manager: JowManager = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([
-        JowSyncSensor(manager, entry),
-        JowAccountSensor(manager, entry),
-        JowCartSensor(manager, entry),
-    ])
 
 
 class _JowStateSensorBase(SensorEntity):
@@ -99,24 +86,34 @@ class JowSyncSensor(_JowStateSensorBase):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         m = self._manager
-        # divergence : plats dans le plan HA qui ne sont pas dans la liste
-        # ouverte Jow (approximation — la vraie liste n'est pas en cache)
+        # divergence réelle : plats du plan HA absents de la liste ouverte Jow
+        # (le cache est rempli par les synchros ; s'il est vide, la divergence
+        # n'est pas calculable et vaut None)
         plan_ids = {
             meal.get("id") for meal in m.plan.values()
             if isinstance(meal, dict) and meal.get("id")
         }
-        jow_ids = {
-            (r.get("id") or r.get("_id"))
-            for r in (m.favorites or [])
-        }
+        if m.jow_open_meals:
+            jow_ids = {
+                (mm.get("recipe") or {}).get("id") or (mm.get("recipe") or {}).get("_id")
+                for mm in m.jow_open_meals
+            }
+            divergence = len(plan_ids - jow_ids)
+            plats_jow = len(jow_ids)
+        else:
+            divergence = None
+            plats_jow = None
         return {
             "plats_planifies": len(m.plan),
+            "plats_dans_jow": plats_jow,
+            "divergence_ha_vers_jow": divergence,
+            "dernier_import": m.last_import,
+            "dernier_envoi": m.last_send,
             "rejets_memorises": len(m.rejected),
             "ingredients_interdits": len(m.banned_ingredients),
             "ingredients_a_eviter": len(m.avoid_ingredients),
             "items_courses": len(m.shopping),
             "items_approuves": len(m.approved),
-            "plats_en_commun_avec_favoris": len(plan_ids & jow_ids),
             "anti_repetition_jours": 60,
         }
 

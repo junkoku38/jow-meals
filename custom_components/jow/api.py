@@ -1,13 +1,15 @@
-"""Client HTTP Jow — toutes les routes API au même endroit.
+"""Client HTTP Jow — primitives et routes en cours de centralisation.
 
-Extrait du manager historique lors de la refonte v1.0. Les endpoints
-et leurs pièges sont documentés dans docs/jow-api.md. Un seul objet
-`JowClient` par instance : gère les headers, le refresh 401→retry,
-et expose des méthées par route.
+Introduit à la refonte v1.0 : gère les headers, le refresh 401→retry
+et les POST authentifiés. Le manager reste la façade métier et
+conserve certaines implémentations historiques (recherche, détail,
+letscook…) qui migrent ici progressivement — les méthodes présentes
+ici non encore consommées servent aux prochaines étapes (commande,
+courses enrichies). Les pièges de l'API sont documentés dans
+docs/jow-api.md.
 
 `requests` synchrone dans l'executor : choix documenté (pattern HA
-supporté ; les chemins sont couverts par les tests d'API qui mockent
-`requests.post/get` au niveau module).
+supporté ; couvert par les tests qui mockent requests au niveau module).
 """
 
 from __future__ import annotations
@@ -153,10 +155,15 @@ class JowClient:
             if resp.status_code != 200:
                 _LOGGER.warning("Refresh Jow refusé (HTTP %s)", resp.status_code)
                 return None
-            data = resp.json().get("data", {})
+            # L'API renvoie les tokens À LA RACINE (pas de wrapper "data" —
+            # vérifié sur la réponse réelle : {accessToken, refreshToken, …}).
+            data = resp.json()
             new_access = data.get("accessToken")
+            new_refresh = data.get("refreshToken")
+            # rotation du refresh token : le serveur peut le faire tourner,
+            # on persiste les deux via le callback (le manager décide)
             if new_access and self._on_refreshed:
-                await self._on_refreshed(new_access)
+                await self._on_refreshed(new_access, new_refresh)
             return new_access
         except Exception as err:
             _LOGGER.warning("Refresh Jow échoué : %s", err)

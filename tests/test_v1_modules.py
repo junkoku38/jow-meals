@@ -81,9 +81,12 @@ class _ClientHarness:
             on_token_refreshed=self._on_refresh,
         )
 
-    async def _on_refresh(self, token):
+    async def _on_refresh(self, token, new_refresh=None):
         self.refreshed_with = token
+        self.rotated_with = new_refresh
         self.access = token
+        if new_refresh:
+            self.refresh = new_refresh
 
 
 def test_client_get_refreshes_on_401():
@@ -105,7 +108,7 @@ def test_client_get_refreshes_on_401():
         class R:
             status_code = 200
             def json(self):
-                return {"data": {"accessToken": "NEW"}}
+                return {"accessToken": "NEW"}
         return R()
 
     api.requests.get = fake_get
@@ -128,13 +131,15 @@ def test_client_refresh_without_authorization_header():
         class R:
             status_code = 200
             def json(self):
-                return {"data": {"accessToken": "FRESH"}}
+                # FORMAT RÉEL (vérifié contre l'API) : tokens à la racine
+                return {"accessToken": "FRESH", "refreshToken": "ROTATED"}
         return R()
 
     api.requests.post = fake_post
     tok = asyncio.run(h.client.refresh_token())
     assert tok == "FRESH"
     assert "authorization" not in seen["headers"]
+    assert h.rotated_with == "ROTATED"   # rotation du refresh persistée
 
 
 def test_client_search_recipes_uses_executor():
