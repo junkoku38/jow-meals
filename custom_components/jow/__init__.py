@@ -45,6 +45,7 @@ from .const import (
     SERVICE_IMPORT_MENU,
     SERVICE_MEAL_DONE,
     SERVICE_PLAN_MEAL,
+    SERVICE_RECOMMENDATIONS,
     SERVICE_REFRESH_SHOPPING_LIST,
     SERVICE_RENEW_WEEK,
     SERVICE_SEARCH,
@@ -404,6 +405,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         within = call.data.get("within_days", 3)
         return {"expiring": mgr.expiring_ingredients(within_days=within)}
 
+    async def handle_recommendations(call: ServiceCall) -> ServiceResponse:
+        """Recommandations natives du moteur Jow (sans agent IA)."""
+        mgr = _get_manager(hass, call, manager)
+        if not mgr.is_authenticated:
+            return {"recipes": [], "count": 0, "error": "token_jow_absent"}
+        recipes = await mgr.async_jow_recommendations(
+            count=call.data.get(ATTR_LIMIT, 10),
+        )
+        return {"recipes": recipes, "count": len(recipes)}
+
     async def handle_import_menu(call: ServiceCall) -> ServiceResponse:
         """Importe le menu de la semaine depuis le compte Jow (app/mobile)."""
         mgr = _get_manager(hass, call, manager)
@@ -445,6 +456,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_RECOMMENDATIONS, handle_recommendations,
+        schema=vol.Schema({
+            vol.Optional(ATTR_LIMIT, default=10): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_RENEW_WEEK, handle_renew_week,
@@ -647,6 +666,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_IMPORT_MENU,
                 SERVICE_EXPIRING,
                 SERVICE_RENEW_WEEK,
+                SERVICE_RECOMMENDATIONS,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,

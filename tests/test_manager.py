@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import types
+import json  # noqa: E402
 from datetime import date, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -438,6 +439,81 @@ def test_renew_week_clears_and_refills():
     assert all("Nouveau plat" in n for n in names)
     # les 7 anciens sont rejets
     assert len(m.rejected) == 7
+
+
+# ---------------------------------------------------------------------------
+# Recommandations natives Jow (reco/more)
+# ---------------------------------------------------------------------------
+
+def test_jow_recommendations_body_and_fallback():
+    """Le corps de reco/more exclut récents + rejets ; suggest replie sur
+    les reco natives quand la recherche textuelle ne trouve rien."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""
+    m.jow_token = "tok"
+    import asyncio
+    from datetime import date as _date, timedelta as _td
+
+    # un plat planifié récent + un rejet
+    m.plan = {}
+    m.plan[(_date.today() - _td(days=1)).isoformat()] = {"id": "recent1", "name": "Récent"}
+    m.rejected = [{"id": "rej1", "name": "Rejeté", "ts": 9999999999}]
+
+    captured = {}
+
+    def fake_post(url, headers=None, params=None, data=None, timeout=None):
+        captured["url"] = url
+        captured["body"] = json.loads(data)
+
+        class R:
+            status_code = 200
+
+            def json(self):
+                return {"data": [{"id": "reco1", "title": "Suggestion native"}]}
+        return R()
+
+    # le manager utilise le module requests global — on monkeypatche
+    _mod.requests.post = fake_post
+    # executor : le hass mocké doit exécuter la fonction directement
+    m.hass.async_add_executor_job = AsyncMock(side_effect=lambda f, *a: f(*a))
+
+    recos = asyncio.run(m.async_jow_recommendations(count=5))
+    assert [r["id"] for r in recos] == ["reco1"]
+    body = captured["body"]
+    assert "recent1" in body["excludedRecipesIds"]
+    assert "rej1" in body["excludedRecipesIds"]
+    assert captured["url"].endswith("/recipes/reco/more")
+
+
+def test_suggest_falls_back_to_native_reco_on_empty_search():
+    """suggest : recherche vide → recommandations natives Jow."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""
+    m.plan = {}
+    import asyncio
+
+    calls = {"search": 0, "reco": 0}
+
+    async def fake_search(q, limit=5, start=0):
+        calls["search"] += 1
+        return []  # recherche vide
+
+    async def fake_reco(count=10, exclude_ids=None):
+        calls["reco"] += 1
+        return [{"id": "nat1", "name": "Suggestion native", "title": "Suggestion native"}]
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_jow_recommendations = fake_reco
+    m.async_fetch_calories = fake_calories
+
+    res = asyncio.run(m.async_suggest(criteria="plat", limit=5))
+    assert calls["reco"] == 1
+    assert res and res[0]["id"] == "nat1"
 
 
 def test_expiring_ingredients_from_planning():

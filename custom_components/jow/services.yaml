@@ -692,3 +692,26 @@ expiring:
       description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
       selector:
         text:
+
+recommendations:
+  name: Recommandations natives Jow
+  description: >-
+    Recommandations personnalisées du moteur de suggestion de jow.fr
+    (/recipes/reco/more) — sans agent IA, sans latence. Respecte
+    l'anti-répétition : les plats des 4 dernières semaines et les rejets
+    sont exclus côté serveur, et les habitudes alimentaires configurées
+    (végétarien, sans gluten…) sont transmises. Requiert un compte Jow
+    (refresh token).
+  fields:
+    limit:
+      name: Nombre de recettes
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 20
+    entry_name:
+      name: Instance Jow
+      description: Nom de l'instance Jow à utiliser (si plusieurs configurées). Laisser vide pour l'instance par défaut.
+      selector:
+        text:

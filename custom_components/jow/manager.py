@@ -954,6 +954,38 @@ class JowManager:
         # Trier par rayon si activé
         return self._sort_by_aisle(lines)
 
+    async def async_get_jow_shopping_ingredients(self) -> list[dict]:
+        """Ingrédients agrégés de la liste de courses Jow (GET /shoppinglist).
+
+        Contrairement à letscook, cette route expose les quantités
+        agrégées du menu Jow (y compris conversions d'unités
+        pré-calculées). Utilisé pour enrichir la liste HA quand le
+        planning provient en partie de plats importés (dont les
+        ingrédients ne sont pas stockés).
+        """
+        resp = await self._async_jow_get(
+            JOW_SHOPPING_URL, params={"availabilityZoneId": "FR"}
+        )
+        if resp is None or resp.status_code != 200:
+            return []
+        try:
+            data = resp.json().get("data", {})
+        except ValueError:
+            return []
+        out = []
+        for ing in data.get("recipeIngredients", []) or []:
+            if not isinstance(ing, dict):
+                continue
+            item = ing.get("item") or ing.get("ingredient") or {}
+            name = (item.get("name") or "").strip()
+            if not name:
+                continue
+            qty = ing.get("naturalUnitAmount")
+            unit = (item.get("naturalUnit") or {}).get("name", "") if isinstance(item.get("naturalUnit"), dict) else ""
+            summary = f"{qty} {unit} {name}".strip() if qty else name
+            out.append({"name": name, "quantity": qty, "unit": unit, "summary": summary})
+        return out
+
     async def async_refresh_shopping_list(
         self, week_offset: int = 0, keep_checked: bool = False
     ) -> None:
@@ -1260,6 +1292,73 @@ class JowManager:
     # ------------------------------------------------------------------
     # Marquer un repas comme fait + retirer les ingrédients du stock
     # ------------------------------------------------------------------
+    async def _async_mark_cooked_on_jow(self, recipe_id: str) -> None:
+        """Marque une recette comme cuisinée dans le menu Jow (best effort).
+
+        Mécanisme observé : la réécriture de la liste ouverte avec
+        isCooked: true retire le plat de la liste active côté site —
+        c'est le « repas fait » de jow.fr. Échec silencieux (l'état HA
+        reste la référence ; la synchro Jow est un confort).
+        """
+        if not self.jow_token or not recipe_id:
+            return
+        try:
+            # lire la liste ouverte
+            resp = await self._async_jow_get(
+                "https://api.jow.fr/public/profile/letscook",
+                params={"availabilityZoneId": "FR", "nbMeals": 40},
+            )
+            if resp is None or resp.status_code != 200:
+                return
+            data = resp.json().get("data", {})
+            osl = data.get("openShoppingList") or {}
+            meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+            if not any(
+                _safe_id((m.get("recipe") or {}).get("id") or (m.get("recipe") or {}).get("_id")) == recipe_id
+                for m in meals
+            ):
+                return  # pas dans la liste Jow : rien à marquer
+
+            # réécrire : le plat cible avec isCooked, les autres inchangés
+            body_meals = []
+            for m in meals:
+                r = m.get("recipe") or {}
+                rid = _safe_id(r.get("id") or r.get("_id"))
+                if not rid:
+                    continue
+                body_meals.append({
+                    "recipe": rid,
+                    "coversCount": m.get("coversCount") or self.default_covers,
+                    "source": m.get("source") or "jow",
+                    **({"isCooked": True} if rid == recipe_id else {}),
+                })
+
+            def _post():
+                headers = self._jow_auth_headers()
+                headers["content-type"] = "application/json"
+                headers["accept"] = "application/json, text/plain, */*"
+                return requests.post(
+                    "https://api.jow.fr/public/shoppinglist/open",
+                    headers=headers,
+                    params={
+                        "populateRecipes": "true",
+                        "populateIngredients": "true",
+                        "availabilityZoneId": "FR",
+                    },
+                    data=json.dumps({"meals": body_meals}),
+                    timeout=20,
+                )
+
+            resp2 = await self.hass.async_add_executor_job(_post)
+            if resp2.status_code in (200, 201, 204):
+                _LOGGER.info("Recette %s marquée cuisinée sur jow.fr", recipe_id)
+            else:
+                _LOGGER.debug(
+                    "Marquage isCooked refusé (HTTP %s) — sans conséquence", resp2.status_code
+                )
+        except Exception as err:
+            _LOGGER.debug("Marquage isCooked impossible : %s", err)
+
     async def async_meal_done(self, day: date) -> dict | None:
         """Marque un repas comme fait et retire les ingrédients de la liste de courses.
 
@@ -1271,6 +1370,11 @@ class JowManager:
         if not meal:
             _LOGGER.warning("Aucun repas planifié pour %s", day.isoformat())
             return None
+
+        # Refléter le « repas fait » sur jow.fr (best effort, silencieux) :
+        # la recette est marquée isCooked dans la liste ouverte du compte.
+        if meal.get("id"):
+            await self._async_mark_cooked_on_jow(meal["id"])
 
         # Ingrédients du repas terminé (noms normalisés)
         done_ingredients = {
@@ -1453,6 +1557,68 @@ class JowManager:
         _LOGGER.warning("Sélection IA : numéro invalide « %s », ordre conservé", answer)
         return None
 
+    async def async_jow_recommendations(self, count: int = 10, exclude_ids: list[str] | None = None) -> list[dict]:
+        """Recommandations natives du moteur Jow (/recipes/reco/more).
+
+        Le site suggère lui-même des recettes personnalisées (userProfile :
+        habitudes, goûts exclus) — utilisable comme fallback sans agent IA
+        (zéro latence ai_task) ou comme source alternative de diversité.
+        excludedRecipesIds reçoit plats récents + rejets pour respecter
+        l'anti-répétition côté serveur.
+        """
+        from datetime import date as _date
+        from datetime import timedelta as _td
+
+        cutoff = (_date.today() - _td(weeks=4)).isoformat()
+        excluded: list[str] = list(exclude_ids or [])
+        for day_iso, meal in self.plan.items():
+            if meal and meal.get("id") and day_iso >= cutoff:
+                excluded.append(meal["id"])
+        excluded.extend(r.get("id") for r in self.rejected if r.get("id"))
+
+        body: dict = {
+            "context": "cookbook-menu",
+            "excludedRecipesIds": excluded[:50],
+            "count": count,
+        }
+        # userProfile : les habitudes/goûts du compte synchronisent mieux
+        # les reco que rien du tout
+        if self.preferences or self.banned_ingredients:
+            habits: dict = {}
+            for key, label in (
+                ("vegetarian", "végétarien"), ("vegan", "végétalien"),
+                ("pescatarian", "pescétarien"), ("glutenFree", "sans gluten"),
+                ("dairyFree", "sans lactose"), ("porkless", "sans porc"),
+            ):
+                if label in (self.preferences or ""):
+                    habits[key] = True
+            if habits:
+                body["userProfile"] = {"eatingHabits": habits}
+
+        def _post():
+            headers = self._jow_auth_headers()
+            headers["content-type"] = "application/json"
+            headers["accept"] = "application/json, text/plain, */*"
+            return requests.post(
+                "https://api.jow.fr/public/recipes/reco/more",
+                headers=headers,
+                params={"availabilityZoneId": "FR", "count": str(count)},
+                data=json.dumps(body),
+                timeout=20,
+            )
+
+        if not self.jow_token:
+            return []
+        resp = await self.hass.async_add_executor_job(_post)
+        if resp.status_code != 200:
+            _LOGGER.warning("Recommandations Jow indisponibles (HTTP %s)", resp.status_code)
+            return []
+        try:
+            data = resp.json().get("data", [])
+        except ValueError:
+            return []
+        return [_recipe_to_dict(r, self.default_covers) for r in data if isinstance(r, dict)]
+
     async def async_suggest(
         self,
         criteria: str = "",
@@ -1605,6 +1771,13 @@ class JowManager:
         if len(results) == 50:
             second = await self.async_search(query, limit=50, start=50)
             results.extend(r for r in second if r.get("id") not in {x.get("id") for x in results})
+        # Repli natif : si la recherche textuelle ne trouve RIEN, le moteur
+        # de recommandation Jow (/recipes/reco/more) propose des recettes
+        # personnalisées — mieux qu'une liste vide, sans agent IA.
+        if not results:
+            _LOGGER.info("Recherche vide pour « %s » — repli sur les recommandations natives Jow", query)
+            native = await self.async_jow_recommendations(count=max(limit, 10))
+            results = native
         covers = covers or self.default_covers
         recipes = [_recipe_to_dict(r, covers) for r in results]
 
@@ -1962,13 +2135,29 @@ class JowManager:
         Remplace les champs manuels par les données du profil Jow :
         - eatingHabits → préférences (végétarien, sans gluten, etc.)
         - excludedIngredientTastes → allergies/interdits (ingrédients exclus)
+
+        Source : /profile/unified (une seule requête, jowProfile complet —
+        plus riche que /profile qui n'expose pas toujours les goûts) avec
+        repli sur /profile.
         """
-        profile = await self.async_get_jow_profile()
-        if not profile:
+        jow_profile = None
+        resp = await self._async_jow_get(
+            "https://api.jow.fr/public/profile/unified"
+        )
+        if resp is not None and resp.status_code == 200:
+            try:
+                jow_profile = resp.json().get("data", {}).get("jowProfile") or {}
+            except ValueError:
+                jow_profile = None
+        if not jow_profile:
+            jow_profile = await self.async_get_jow_profile() or {}
+
+        if not jow_profile:
+            _LOGGER.warning("Synchronisation des préférences : profil Jow illisible")
             return
 
         # Eating habits → preferences
-        habits = profile.get("eatingHabits", {})
+        habits = jow_profile.get("eatingHabits", {})
         pref_labels = []
         habit_map = {
             "vegetarian": "végétarien",
@@ -1986,7 +2175,7 @@ class JowManager:
             _LOGGER.debug("Préférences synchronisées depuis Jow : %s", self.preferences)
 
         # Excluded ingredients → allergies/interdits
-        excluded = profile.get("excludedIngredientTastes", [])
+        excluded = jow_profile.get("excludedIngredientTastes", [])
         if excluded:
             allergy_names = [e.get("name", "") for e in excluded if e.get("name")]
             if allergy_names:
