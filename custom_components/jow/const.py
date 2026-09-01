@@ -5,7 +5,7 @@ DOMAIN = "jow"
 STORAGE_KEY = "jow.data"
 STORAGE_VERSION = 1
 
-SIGNAL_UPDATE = "jow_update"
+SIGNAL_UPDATE = "jow_update"  # suffixé par entry_id via JowManager.update_signal
 
 # Jours de la semaine (index 0 = lundi, comme datetime.weekday())
 WEEKDAYS = [

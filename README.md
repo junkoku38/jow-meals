@@ -142,7 +142,14 @@ data:
 
 Renvoie `{recipes: [...]}` — utile pour un agent conversationnel ou un script.
 
-## Carte « menu de la semaine » avec vignettes et liens
+## Carte dédiée « menu de la semaine »
+
+Une carte Lovelace complète (vignettes, drag & drop, favoris, boutons ± couverts,
+suggestions IA, multi-instance) est disponible dans le dépôt
+[jow-card-ha](https://github.com/junkoku38/jow-card-ha) (type
+`custom:weekly-menu-card`, installable via HACS).
+
+## Carte « menu de la semaine » avec vignettes et liens (markdown, sans extension)
 
 Carte markdown, une ligne par jour, image + lien vers la recette :
 

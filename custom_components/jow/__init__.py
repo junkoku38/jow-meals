@@ -228,10 +228,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         mgr = _get_manager(hass, call, manager)
         favorites = await mgr.async_get_jow_favorites()
         mgr.favorites = favorites
+        await mgr.async_save_favorites()
         # Emettre un signal pour mettre a jour les capteurs
-        from .const import SIGNAL_UPDATE
         from homeassistant.helpers.dispatcher import async_dispatcher_send
-        async_dispatcher_send(hass, SIGNAL_UPDATE)
+        async_dispatcher_send(hass, mgr.update_signal)
         return {"recipes": favorites, "count": len(favorites)}
 
     async def handle_sync_preferences(call: ServiceCall) -> ServiceResponse:

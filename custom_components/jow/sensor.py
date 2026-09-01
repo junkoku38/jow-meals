@@ -7,12 +7,12 @@ from datetime import date
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_change
 
-from .const import DOMAIN, SIGNAL_UPDATE, WEEKDAYS
+from .const import DOMAIN, WEEKDAYS
 from .manager import JowManager
 
 
@@ -39,16 +39,19 @@ class JowBaseSensor(SensorEntity):
 
     def __init__(self, manager: JowManager, entry: ConfigEntry) -> None:
         self._manager = manager
+        # Nom d'instance (multi-instance) ou "Jow" par défaut : évite les
+        # sensor.jow_lundi_2, _3… quand l'utilisateur nomme ses instances.
+        instance_name = (entry.data.get("name") or entry.title or "Jow").strip() or "Jow"
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)},
-            name="Jow",
+            name=instance_name,
             manufacturer="Jow (non officiel)",
-            entry_type="service",
+            entry_type=DeviceEntryType.SERVICE,
         )
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
+            async_dispatcher_connect(self.hass, self._manager.update_signal, self._handle_update)
         )
         # Les dates glissent : on recalcule chaque nuit.
         self.async_on_remove(

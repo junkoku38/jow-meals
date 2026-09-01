@@ -16,7 +16,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, SIGNAL_UPDATE
+from .const import DOMAIN
 from .manager import JowManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -53,7 +53,7 @@ class JowShoppingList(TodoListEntity):
         self._update_todo_items()
         self.async_write_ha_state()
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
+            async_dispatcher_connect(self.hass, self._manager.update_signal, self._handle_update)
         )
 
     @callback
@@ -114,7 +114,7 @@ class JowApprovedList(TodoListEntity):
         self._update_todo_items()
         self.async_write_ha_state()
         self.async_on_remove(
-            async_dispatcher_connect(self.hass, SIGNAL_UPDATE, self._handle_update)
+            async_dispatcher_connect(self.hass, self._manager.update_signal, self._handle_update)
         )
 
     @callback

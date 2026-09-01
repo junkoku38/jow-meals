@@ -360,6 +360,7 @@ class JowManager:
     ) -> None:
         self.hass = hass
         self.entry_id = entry_id
+
         self.default_covers = default_covers
         self.allergies = allergies
         self.preferences = preferences
@@ -374,6 +375,12 @@ class JowManager:
         # mutuel en multi-instance.
         store_key = f"{STORAGE_KEY}.{entry_id}" if entry_id else STORAGE_KEY
         self._store: Store = Store(hass, STORAGE_VERSION, store_key)
+        # Migration : les versions antérieures stockaient sous "jow.data"
+        # (clé partagée). Si la clé par instance est vide, on retombe une
+        # fois sur la clé legacy pour ne pas perdre le planning existant.
+        self._legacy_store: Store | None = (
+            Store(hass, STORAGE_VERSION, STORAGE_KEY) if store_key != STORAGE_KEY else None
+        )
         # {"2026-08-10": {recette...}}
         self.plan: dict[str, dict] = {}
         # [{"uid": "...", "summary": "200 g de riz", "done": False}]
@@ -391,11 +398,26 @@ class JowManager:
         # ajouter/retirer manuellement.
         self.banned_ingredients: list[str] = []
 
+    @property
+    def update_signal(self) -> str:
+        """Signal dispatcher propre à cette instance (isolation
+        multi-instance : un save ne réveille que ses entités)."""
+        return f"{SIGNAL_UPDATE}.{self.entry_id}" if self.entry_id else SIGNAL_UPDATE
+
     # ------------------------------------------------------------------
     # Persistance
     # ------------------------------------------------------------------
     async def async_load(self) -> None:
-        data = await self._store.async_load() or {}
+        data = await self._store.async_load()
+        if not data and self._legacy_store is not None:
+            # Migration depuis la clé partagée "jow.data" (première
+            # instance qui charge récupère les données ; elles seront
+            # ré-enregistrées sous la clé par instance au premier save).
+            legacy = await self._legacy_store.async_load()
+            if legacy:
+                _LOGGER.info("Migration du stockage legacy « %s » vers « jow.data.%s »", STORAGE_KEY, self.entry_id)
+                data = legacy
+        data = data or {}
         self.plan = data.get("plan", {})
         self.shopping = data.get("shopping", [])
         self.approved = data.get("approved", [])
@@ -412,18 +434,28 @@ class JowManager:
         self.avoid_ingredients = [
             str(a).strip().lower() for a in avoid if isinstance(a, str) and a.strip()
         ]
+        # Favoris mis en cache par sync_favorites — persistés pour survivre
+        # aux redémarrages (la carte « favoris » reste utilisable hors ligne).
+        favs = data.get("favorites", [])
+        self.favorites = [f for f in favs if isinstance(f, dict)] if isinstance(favs, list) else []
+
+    async def async_save_favorites(self) -> None:
+        """Persiste uniquement le cache des favoris."""
+        await self._store.async_save(self._storage_dict())
+
+    def _storage_dict(self) -> dict:
+        return {
+            "plan": self.plan,
+            "shopping": self.shopping,
+            "approved": self.approved,
+            "banned_ingredients": self.banned_ingredients,
+            "avoid_ingredients": self.avoid_ingredients,
+            "favorites": self.favorites,
+        }
 
     async def async_save(self) -> None:
-        await self._store.async_save(
-            {
-                "plan": self.plan,
-                "shopping": self.shopping,
-                "approved": self.approved,
-                "banned_ingredients": self.banned_ingredients,
-                "avoid_ingredients": self.avoid_ingredients,
-            }
-        )
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        await self._store.async_save(self._storage_dict())
+        async_dispatcher_send(self.hass, self.update_signal)
 
     # ------------------------------------------------------------------
     # Appels à Jow (bloquants -> executor)
@@ -523,7 +555,7 @@ class JowManager:
     async def async_clear_meal(self, day: date) -> None:
         self.plan.pop(day.isoformat(), None)
         await self.async_save()
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        async_dispatcher_send(self.hass, self.update_signal)
 
     async def async_copy_meal(self, from_day: date, to_day: date) -> dict | None:
         """Copie un repas d'un jour vers un autre (pratique pour les restes)."""
@@ -536,7 +568,7 @@ class JowManager:
 
         self.plan[to_day.isoformat()] = copy.deepcopy(meal)
         await self.async_save()
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        async_dispatcher_send(self.hass, self.update_signal)
         return {"copied": meal.get("name", ""), "to": to_day.isoformat()}
 
     async def async_set_covers(self, day: date, covers: int) -> dict | None:
@@ -555,7 +587,7 @@ class JowManager:
                 except (TypeError, ValueError):
                     pass
         await self.async_save()
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        async_dispatcher_send(self.hass, self.update_signal)
         return {"covers": covers, "day": day.isoformat()}
 
     async def async_exclude_ingredient(self, ingredient: str) -> dict:
@@ -581,7 +613,7 @@ class JowManager:
                 kept.append(item)
         self.shopping = kept
         await self.async_save()
-        async_dispatcher_send(self.hass, SIGNAL_UPDATE)
+        async_dispatcher_send(self.hass, self.update_signal)
         return {"removed": removed, "count": len(removed)}
 
     async def async_clear_recent(self, date_iso: str) -> dict:
@@ -1103,10 +1135,19 @@ class JowManager:
         recipes = recipes[:limit]
 
         # Si un jour de la semaine est fourni, planifier le premier résultat
+        # — sauf si ce jour est déjà planifié (la suggestion ne doit pas
+        # écraser silencieusement un repas existant).
         if weekday and weekday in WEEKDAYS and recipes:
             from datetime import date
             day_idx = WEEKDAYS.index(weekday)
             target_date = self.week_dates(week_offset)[day_idx]
+            if self.plan.get(target_date.isoformat()):
+                _LOGGER.warning(
+                    "Suggestion IA : %s (%s) déjà planifié — planification ignorée, suggestions renvoyées seulement",
+                    weekday,
+                    target_date.isoformat(),
+                )
+                return recipes
             chosen = recipes[0]
             # Récupérer les calories depuis l'endpoint détail
             recipe_id = _safe_id(chosen.get("id"))

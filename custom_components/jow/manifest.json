@@ -1,7 +1,7 @@
 {
   "domain": "jow",
   "name": "Jow",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "documentation": "https://github.com/junkoku38/jow-meals",
   "issue_tracker": "https://github.com/junkoku38/jow-meals/issues",
   "codeowners": ["@junkoku38"],
