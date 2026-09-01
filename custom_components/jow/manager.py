@@ -462,11 +462,19 @@ class JowManager:
     # par HA ; une migration aiohttp est envisageable mais ces chemins
     # (auth, favoris, envoi menu) ne sont pas couverts par les tests.
     # ------------------------------------------------------------------
-    async def async_search(self, query: str, limit: int = 5) -> list[dict]:
-        """Recherche des recettes sur Jow via l'API HTTP directe."""
+    async def async_search(self, query: str, limit: int = 5, start: int = 0) -> list[dict]:
+        """Recherche des recettes sur Jow via l'API HTTP directe.
+
+        `start` permet la pagination (l'API plafonne limit à 50 par page).
+        """
 
         def _search():
-            params = {"start": "0", "availabilityZoneId": "FR", "query": query, "limit": str(max(limit, 1))}
+            params = {
+                "start": str(start),
+                "availabilityZoneId": "FR",
+                "query": query,
+                "limit": str(max(limit, 1)),
+            }
             # Pas de préflight OPTIONS : le CORS preflight est une
             # contrainte navigateur, inutile côté serveur — il doublait
             # la latence de chaque recherche.
@@ -801,6 +809,47 @@ class JowManager:
         """
         return cls._QTY_PREFIX.sub("", text).strip() or text
 
+    _STOP_WORDS_QUERY = {
+        "recette", "recipe", "plat", "repas", "diner", "dîner", "souper",
+        "facile", "rapide", "simple", "bon", "bonne", "avec", "sans",
+        "pour", "moi", "un", "une", "des", "de", "du", "la", "le", "les",
+        "a", "au", "aux", "et", "en", "me", "propose", "veux", "voudrais",
+    }
+
+    @classmethod
+    def _query_keywords(cls, query: str) -> list[str]:
+        """Mots-clés signifiants d'une requête (sans mots vides, >= 3 lettres)."""
+        words = re.findall(r"[a-zàâäéèêëîïôöùûüçœ]+", query.lower())
+        return [w for w in words if len(w) >= 3 and w not in cls._STOP_WORDS_QUERY]
+
+    @classmethod
+    def _rerank_on_query(cls, recipes: list[dict], query: str) -> list[dict]:
+        """Re-trie les recettes selon la correspondance titre/description
+        avec les mots-clés de la requête.
+
+        quicksearch (Jow) fait une recherche en OU logique : « burger
+        asiatique » peut retourner « Burger au poulet à la mexicaine »
+        en tête parce que « burger » matche. Ici, une recette dont le
+        titre contient tous les mots-clés passe devant une recette qui
+        n'en contient qu'un. Égalité de score : ordre API conservé
+        (son ranking reste le tie-breaker).
+        """
+        keywords = cls._query_keywords(query)
+        if not keywords or not recipes:
+            return recipes
+
+        def _score(recipe: dict) -> tuple[int, int]:
+            title = cls._norm(recipe.get("name", ""))
+            desc = cls._norm(recipe.get("description") or "")
+            title_hits = sum(1 for k in keywords if k in title)
+            desc_hits = sum(1 for k in keywords if k in desc)
+            # Le titre pèse 10x plus que la description ; un seul mot-clé
+            # dans le titre vaut mieux que plusieurs en description.
+            return (title_hits, desc_hits)
+
+        # Tri stable : score décroissant, ordre d'origine à égalité.
+        return sorted(recipes, key=_score, reverse=True)
+
     def _sort_by_aisle(self, lines: list[str]) -> list[str]:
         """Trie la liste de courses par rayon (Fruits & Légumes, Boucherie, etc.)."""
         return sorted(lines, key=lambda ligne: (_AISLE_ORDER.index(_aisle_for(ligne)), ligne.lower()))
@@ -1070,9 +1119,23 @@ class JowManager:
                 query = criteria or "recette"
 
         _LOGGER.info("Requête Jow suggérée par l'IA : %s", query)
-        results = await self.async_search(query, limit=max(limit * 5, 30))
+        # quicksearch plafonne limit à 50 par page mais pagine via start :
+        # on récupère deux pages (100 résultats) pour donner de la
+        # profondeur au re-ranking et aux filtres (interdits, répétitions).
+        results = await self.async_search(query, limit=50)
+        if len(results) == 50:
+            second = await self.async_search(query, limit=50, start=50)
+            results.extend(r for r in second if r.get("id") not in {x.get("id") for x in results})
         covers = covers or self.default_covers
         recipes = [_recipe_to_dict(r, covers) for r in results]
+
+        # Re-ranking sémantique léger : quicksearch fait une recherche en
+        # OU logique sur les tokens (« burger asiatique » peut retourner
+        # « Burger au poulet à la mexicaine » en première position parce
+        # que « burger » matche). On rescore chaque recette sur la
+        # présence des mots-clés de la requête dans son titre, pour que
+        # le premier résultat corresponde réellement à la demande.
+        recipes = self._rerank_on_query(recipes, query)
 
         # Exclure les recettes déjà planifiées dans les 4 dernières semaines
         # (au lieu de tout l'historique) pour éviter les répétitions récentes
