@@ -933,6 +933,7 @@ class JowManager:
         weekday: str | None = None,
         week_offset: int = 0,
         ai_prompt: str = "",
+        overwrite: bool = True,
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -1129,15 +1130,17 @@ class JowManager:
         # la profondeur des résultats plutôt que de renvoyer moins que limit.
         recipes = recipes[:limit]
 
-        # Si un jour de la semaine est fourni, planifier le premier résultat
-        # — sauf si ce jour est déjà planifié (la suggestion ne doit pas
-        # écraser silencieusement un repas existant).
+        # Si un jour de la semaine est fourni, planifier le premier résultat.
+        # Par défaut on écrase le repas existant : le scénario nominal de
+        # suggest+weekday est « Changer de recette » (l'utilisateur clique
+        # délibérément sur un jour affiché). overwrite=False (automation)
+        # refuse d'écraser et renvoie les suggestions sans planifier.
         if weekday and weekday in WEEKDAYS and recipes:
             day_idx = WEEKDAYS.index(weekday)
             target_date = self.week_dates(week_offset)[day_idx]
-            if self.plan.get(target_date.isoformat()):
-                _LOGGER.warning(
-                    "Suggestion IA : %s (%s) déjà planifié — planification ignorée, suggestions renvoyées seulement",
+            if self.plan.get(target_date.isoformat()) and overwrite is False:
+                _LOGGER.info(
+                    "Suggestion IA : %s (%s) déjà planifié (overwrite=False) — planification ignorée, suggestions renvoyées seulement",
                     weekday,
                     target_date.isoformat(),
                 )

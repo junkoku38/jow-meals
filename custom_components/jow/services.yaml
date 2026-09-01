@@ -154,10 +154,19 @@ suggest:
         text:
     weekday:
       name: Jour de la semaine
-      description: Si fourni, planifie le premier résultat sur ce jour.
+      description: Si fourni, planifie le premier résultat sur ce jour (écrase un repas existant, sauf si overwrite est à false).
       selector:
         select:
           options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    overwrite:
+      name: Écraser le repas existant
+      description: >-
+        true (défaut) : remplace le repas déjà planifié sur le jour cible —
+        comportement attendu du bouton « Changer de recette ». false : ne
+        planifie pas si le jour est déjà occupé (utile en automation).
+      default: true
+      selector:
+        boolean:
     limit:
       name: Nombre de résultats
       default: 5

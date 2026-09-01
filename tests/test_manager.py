@@ -152,6 +152,45 @@ def test_save_persists_favorites():
 
 
 # ---------------------------------------------------------------------------
+# suggest + weekday : sémantique overwrite (bouton « Changer de recette »)
+# ---------------------------------------------------------------------------
+
+def test_suggest_overwrite_semantics():
+    """Par défaut suggest+weekday écrase (Changer de recette) ;
+    overwrite=False préserve un repas déjà planifié."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""  # pas d'IA : fallback criteria direct
+    m.plan = {}
+    import asyncio
+
+    jour = m.week_dates(0)[0].isoformat()  # lundi de la semaine courante
+    m.plan[jour] = {"id": "r1", "name": "ancien plat"}
+    # _recipe_to_dict lit le champ API "title" (pas "name")
+    recipes = [{"id": "r2", "title": "nouveau plat"}]
+
+    async def fake_search(q, limit=5):
+        return list(recipes)
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+
+    # Défaut : écrase (bouton Changer de recette)
+    res = asyncio.run(m.async_suggest(criteria="curry", weekday="lundi"))
+    assert m.plan[jour]["name"] == "nouveau plat"
+    assert res and res[0]["id"] == "r2"
+
+    # overwrite=False : préserve l'existant, suggestions renvoyées
+    m.plan[jour] = {"id": "r1", "name": "repas préservé"}
+    res = asyncio.run(m.async_suggest(criteria="curry", weekday="lundi", overwrite=False))
+    assert m.plan[jour]["name"] == "repas préservé"
+    assert res and res[0]["id"] == "r2"
+
+
+# ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------
 
