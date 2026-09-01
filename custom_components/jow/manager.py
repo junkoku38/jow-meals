@@ -525,6 +525,32 @@ class JowManager:
             _LOGGER.error("Recherche Jow impossible (%s) : %s", query, err)
             return []
 
+    async def async_get_recipe_detail(self, recipe_id: str) -> dict | None:
+        """Récupère la recette complète depuis l'endpoint détail de Jow.
+
+        Utilisé pour épingler un favori par id exact (sans recherche par
+        titre, qui peut matcher une variante du même nom).
+        """
+        if not recipe_id or not _ID_RE.match(recipe_id):
+            return None
+
+        def _fetch():
+            url = f"{_JOW_RECIPE_URL}/{recipe_id}"
+            # L'endpoint détail exige x-jow-withmeta: true (et non "1")
+            headers = dict(_JOW_HEADERS)
+            headers["x-jow-withmeta"] = "true"
+            headers["accept"] = "application/json, text/plain, */*"
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            return resp.json()
+
+        try:
+            data = await self.hass.async_add_executor_job(_fetch)
+            return data if isinstance(data, dict) else None
+        except Exception as err:
+            _LOGGER.debug("Détail Jow indisponible pour %s : %s", recipe_id, err)
+            return None
+
     async def async_fetch_calories(self, recipe_id: str) -> int | None:
         """Récupère les calories par portion depuis l'endpoint détail de Jow.
 
@@ -574,10 +600,34 @@ class JowManager:
         return self.plan.get(day.isoformat())
 
     async def async_plan_meal(
-        self, day: date, query: str, covers: int | None = None, choice: int = 1
+        self, day: date, query: str, covers: int | None = None, choice: int = 1,
+        recipe_id: str | None = None,
     ) -> dict | None:
-        """Cherche une recette et l'épingle sur un jour."""
+        """Épingle une recette sur un jour.
+
+        recipe_id (optionnel) : épingle directement la recette Jow de cet
+        id (déjà connue — favori, suggestion) sans passer par la recherche
+        par titre, qui peut matcher une variante du même nom.
+        Sinon : cherche par query et prend le choix n° `choice`.
+        """
         covers = covers or self.default_covers
+        if recipe_id:
+            recipe_id = _safe_id(recipe_id)
+        if recipe_id:
+            detail = await self.async_get_recipe_detail(recipe_id)
+            if not detail:
+                _LOGGER.warning("Recette Jow %s introuvable — repli sur la recherche", recipe_id)
+            else:
+                recipe = detail
+                rid = _safe_id(recipe.get("_id") or recipe.get("id"))
+                if rid:
+                    calories = await self.async_fetch_calories(rid)
+                    if calories is not None:
+                        recipe["_calories"] = calories
+                stored = _recipe_to_dict(recipe, covers)
+                self.plan[day.isoformat()] = stored
+                await self.async_save()
+                return stored
         results = await self.async_search(query, limit=max(choice, 1))
         if not results:
             _LOGGER.warning("Aucune recette Jow trouvée pour « %s »", query)
@@ -1605,6 +1655,35 @@ class JowManager:
         """True si un token Jow est configuré."""
         return bool(self.jow_token)
 
+    async def _async_jow_get(
+        self, url: str, params: dict | None = None, timeout: int = 15
+    ) -> requests.Response | None:
+        """GET authentifié avec refresh automatique sur 401.
+
+        Les routes user (profile, favorites, shoppinglist) refusent
+        l'access token après ~48 h ; un 401 ne doit pas se solder en
+        liste vide silencieuse mais déclencher un refresh (le refresh
+        token vit ~6 mois) puis UNE nouvelle tentative.
+        """
+        if not self.jow_token:
+            return None
+
+        def _get(token: str) -> requests.Response:
+            return requests.get(
+                url,
+                headers={**self._jow_auth_headers(), "authorization": f"Bearer {token}"},
+                params=params or {},
+                timeout=timeout,
+            )
+
+        resp = await self.hass.async_add_executor_job(_get, self.jow_token)
+        if resp.status_code == 401 and self.jow_refresh_token:
+            _LOGGER.info("401 sur %s — rafraîchissement du token Jow", url)
+            refreshed = await self.async_refresh_jow_token()
+            if refreshed:
+                resp = await self.hass.async_add_executor_job(_get, self.jow_token)
+        return resp
+
     async def async_refresh_jow_token(self) -> bool:
         """Rafraîchit l'access token JWT Jow via le refresh token.
 
@@ -1676,20 +1755,17 @@ class JowManager:
             _LOGGER.debug("Persistance tokens Jow impossible : %s", err)
 
     async def async_get_jow_profile(self) -> dict | None:
-        """Récupère le profil Jow de l'utilisateur connecté."""
-        if not self.jow_token:
+        """Récupère le profil Jow de l'utilisateur connecté.
+
+        Retourne None si non authentifié ou si l'API échoue (refresh
+        tenté au passage par _async_jow_get).
+        """
+        resp = await self._async_jow_get(JOW_PROFILE_URL)
+        if resp is None or resp.status_code != 200:
             return None
-
-        def _get():
-            headers = self._jow_auth_headers()
-            resp = requests.get(JOW_PROFILE_URL, headers=headers, timeout=15)
-            resp.raise_for_status()
-            return resp.json().get("data", {})
-
         try:
-            return await self.hass.async_add_executor_job(_get)
-        except Exception as err:
-            _LOGGER.warning("Récupération profil Jow échouée : %s", err)
+            return resp.json().get("data", {})
+        except ValueError:
             return None
 
     async def async_sync_preferences_from_jow(self) -> None:
@@ -1738,73 +1814,54 @@ class JowManager:
         return [e.get("name", "") for e in excluded if e.get("name")]
 
     async def async_get_jow_favorites(self) -> list[dict]:
-        """Récupère les recettes favorites du compte Jow."""
-        if not self.jow_token:
-            return []
-
-        def _get():
-            headers = self._jow_auth_headers()
-            resp = requests.get(
-                JOW_FAVORITES_URL,
-                headers=headers,
-                params={"availabilityZoneId": "FR", "limit": 20},
-                timeout=15,
+        """Récupère les recettes favorites du compte Jow (avec refresh 401)."""
+        resp = await self._async_jow_get(
+            JOW_FAVORITES_URL,
+            params={"availabilityZoneId": "FR", "limit": 20},
+        )
+        if resp is None or resp.status_code != 200:
+            _LOGGER.warning(
+                "Favoris Jow indisponibles (HTTP %s) — token expiré ?",
+                resp.status_code if resp is not None else "sans token",
             )
-            resp.raise_for_status()
-            return resp.json().get("data", {}).get("recipes", [])
-
+            return []
         try:
-            return await self.hass.async_add_executor_job(_get) or []
-        except Exception as err:
-            _LOGGER.warning("Récupération favoris Jow échouée : %s", err)
+            return resp.json().get("data", {}).get("recipes", []) or []
+        except ValueError:
             return []
 
     async def async_get_jow_shoppinglist(self) -> dict | None:
-        """Récupère la liste de courses du compte Jow."""
-        if not self.jow_token:
+        """Récupère la liste de courses du compte Jow (avec refresh 401)."""
+        resp = await self._async_jow_get(
+            JOW_SHOPPING_URL, params={"availabilityZoneId": "FR"}
+        )
+        if resp is None:
             return None
-
-        def _get():
-            headers = self._jow_auth_headers()
-            resp = requests.get(
-                JOW_SHOPPING_URL,
-                headers=headers,
-                params={"availabilityZoneId": "FR"},
-                timeout=15,
-            )
-            if resp.status_code == 204:
-                return {}
-            resp.raise_for_status()
-            return resp.json().get("data", {})
-
+        if resp.status_code == 204:
+            return {}
+        if resp.status_code != 200:
+            _LOGGER.warning("Liste de courses Jow indisponible (HTTP %s)", resp.status_code)
+            return None
         try:
-            return await self.hass.async_add_executor_job(_get)
-        except Exception as err:
-            _LOGGER.warning("Récupération liste de courses Jow échouée : %s", err)
+            return resp.json().get("data", {})
+        except ValueError:
             return None
 
     async def async_get_jow_menu(self) -> list[dict]:
-        """Récupère le menu de la semaine suggéré par Jow."""
-        if not self.jow_token:
+        """Récupère le menu de la semaine suggéré par Jow (avec refresh 401)."""
+        resp = await self._async_jow_get(
+            JOW_MENU_URL, params={"availabilityZoneId": "FR"}
+        )
+        if resp is None:
             return []
-
-        def _get():
-            headers = self._jow_auth_headers()
-            resp = requests.get(
-                JOW_MENU_URL,
-                headers=headers,
-                params={"availabilityZoneId": "FR"},
-                timeout=15,
-            )
-            if resp.status_code == 204:
-                return []
-            resp.raise_for_status()
-            return resp.json().get("data", {}).get("recipes", [])
-
+        if resp.status_code == 204:
+            return []
+        if resp.status_code != 200:
+            _LOGGER.warning("Menu Jow indisponible (HTTP %s)", resp.status_code)
+            return []
         try:
-            return await self.hass.async_add_executor_job(_get) or []
-        except Exception as err:
-            _LOGGER.warning("Récupération menu Jow échouée : %s", err)
+            return resp.json().get("data", {}).get("recipes", []) or []
+        except ValueError:
             return []
 
     async def async_send_menu_to_jow(self, week_offset: int = 0) -> int:

@@ -17,6 +17,11 @@
     },
     "abort": {
       "already_configured": "Jow est déjà configuré."
+    },
+    "errors": {
+      "invalid_format": "Le token n'a pas le format attendu (JWT à 3 segments). Copiez la valeur du champ refreshToken depuis jow.fr (F12 → Console → localStorage).",
+      "corrupted": "Token illisible (probablement tronqué ou altéré au copier-coller). Recopiez-le en entier — depuis la console Chrome, utilisez copy() pour éviter l'altération.",
+      "wrong_type": "Vous avez collé un access token (valable 48 h) au lieu du refresh token (~6 mois). Reprenez la valeur du champ refreshToken."
     }
   },
   "options": {
@@ -32,6 +37,11 @@
           "jow_refresh_token": "Refresh token Jow"
         }
       }
+    },
+    "errors": {
+      "invalid_format": "Le token n'a pas le format attendu (JWT à 3 segments). Copiez la valeur du champ refreshToken depuis jow.fr (F12 → Console → localStorage).",
+      "corrupted": "Token illisible (probablement tronqué ou altéré au copier-coller). Recopiez-le en entier — depuis la console Chrome, utilisez copy() pour éviter l'altération.",
+      "wrong_type": "Vous avez collé un access token (valable 48 h) au lieu du refresh token (~6 mois). Reprenez la valeur du champ refreshToken."
     }
   }
 }

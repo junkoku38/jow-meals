@@ -17,6 +17,11 @@
     },
     "abort": {
       "already_configured": "Jow is already configured."
+    },
+    "errors": {
+      "invalid_format": "Token does not match the expected JWT format (3 segments). Copy the refreshToken value from jow.fr (F12 → Console → localStorage).",
+      "corrupted": "Token unreadable (likely truncated or altered while copy-pasting). Copy it again in full — use copy() from the Chrome console to avoid alteration.",
+      "wrong_type": "You pasted an access token (valid 48 h) instead of the refresh token (~6 months). Use the refreshToken field value."
     }
   },
   "options": {
@@ -32,6 +37,11 @@
           "jow_refresh_token": "Jow refresh token"
         }
       }
+    },
+    "errors": {
+      "invalid_format": "Token does not match the expected JWT format (3 segments). Copy the refreshToken value from jow.fr (F12 → Console → localStorage).",
+      "corrupted": "Token unreadable (likely truncated or altered while copy-pasting). Copy it again in full — use copy() from the Chrome console to avoid alteration.",
+      "wrong_type": "You pasted an access token (valid 48 h) instead of the refresh token (~6 months). Use the refreshToken field value."
     }
   }
 }

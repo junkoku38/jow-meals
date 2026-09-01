@@ -1,11 +1,22 @@
 plan_meal:
   name: Planifier un repas
-  description: Recherche une recette sur Jow et l'épingle sur un jour.
+  description: >-
+    Épingle une recette sur un jour. Avec recipe_id (id Jow exact, ex. un
+    favori) : épingle directement cette recette. Sinon : recherche par
+    query et prend le résultat n° choice.
   fields:
     query:
       name: Recherche
       required: true
       example: poulet curry coco
+      selector:
+        text:
+    recipe_id:
+      name: ID de recette (exact)
+      description: >-
+        Id Jow de la recette à épingler directement (ex. un favori) —
+        ignore la recherche par titre. Si la recette est introuvable,
+        repli sur la recherche query.
       selector:
         text:
     entry_name:

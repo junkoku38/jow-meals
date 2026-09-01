@@ -178,6 +178,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             call.data[ATTR_QUERY],
             covers=call.data.get(ATTR_COVERS),
             choice=call.data.get(ATTR_CHOICE, 1),
+            recipe_id=call.data.get("recipe_id"),
         )
 
     async def handle_clear_meal(call: ServiceCall) -> None:
@@ -231,9 +232,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return {"profile": profile}
 
     async def handle_sync_favorites(call: ServiceCall) -> ServiceResponse:
-        """Récupère les recettes favorites du compte Jow et les met en cache."""
+        """Récupère les recettes favorites du compte Jow et les met en cache.
+
+        Un token absent/invalide (après refresh tenté) est signalé dans la
+        réponse — la carte peut afficher « token Jow requis » au lieu de
+        « aucun favori », deux diagnostics très différents.
+        """
         mgr = _get_manager(hass, call, manager)
+        if not mgr.is_authenticated:
+            return {"recipes": [], "count": 0, "error": "token_jow_absent"}
         favorites = await mgr.async_get_jow_favorites()
+        if not favorites and mgr.jow_token:
+            # refresh tenté par _async_jow_get ; re-tester le profil pour
+            # distinguer « compte sans favoris » de « auth toujours KO »
+            profile = await mgr.async_get_jow_profile()
+            if profile is None:
+                return {"recipes": [], "count": 0, "error": "auth_echouee"}
         mgr.favorites = favorites
         await mgr.async_save_favorites()
         # Emettre un signal pour mettre a jour les capteurs
@@ -369,6 +383,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
             vol.Optional(ATTR_COVERS): vol.All(vol.Coerce(int), vol.Range(min=1, max=12)),
             vol.Optional(ATTR_CHOICE, default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=10)),
+            vol.Optional("recipe_id"): cv.string,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
     )
