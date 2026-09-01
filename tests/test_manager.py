@@ -261,6 +261,61 @@ def test_ai_pick_prompt_is_enriched():
     assert "méditerranéenne" in p                 # préférences
 
 
+def test_ai_pick_prompt_contains_calorie_constraint():
+    """max_calories est transmis comme contrainte impérative au prompt."""
+    m = _manager()
+    captured = {}
+
+    async def fake_generate(instructions, ai_ent, task_name="x"):
+        captured["prompt"] = instructions
+        return "1"
+
+    m._ai_generate = fake_generate
+    import asyncio
+
+    asyncio.run(m._ai_pick_recipe(
+        "plat léger", [{"id": "r1", "name": "Salade"}], "ai_task.x",
+        max_calories=600,
+    ))
+    assert "600" in captured["prompt"]
+    assert "IMPÉRATIVE" in captured["prompt"]
+
+
+def test_suggest_max_total_time_hard_filter():
+    """max_total_time écarte en dur les recettes trop longues ; si tout
+    est écarté, le filtre est sauté (liste conservée)."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.ai_entity = ""
+    m.plan = {}
+    import asyncio
+
+    api_recipes = [
+        {"id": "r1", "title": "Salade express", "preparationTime": 10, "cookingTime": 5},
+        {"id": "r2", "title": "Gratin", "preparationTime": 30, "cookingTime": 45},
+        {"id": "r3", "title": "Wok", "preparationTime": 15, "cookingTime": 10},
+    ]
+
+    async def fake_search(q, limit=5, start=0):
+        return list(api_recipes)
+
+    async def fake_calories(rid):
+        return None
+
+    m.async_search = fake_search
+    m.async_fetch_calories = fake_calories
+
+    # Filtre 30 min : gratin (75 min) écarté, salade et wok conservés
+    res = asyncio.run(m.async_suggest(criteria="plat", limit=5, max_total_time=30))
+    ids = [r["id"] for r in res]
+    assert "r2" not in ids
+    assert set(ids) == {"r1", "r3"}
+
+    # Filtre 10 min : tout écarté → filtre ignoré, liste complète
+    res = asyncio.run(m.async_suggest(criteria="plat", limit=5, max_total_time=10))
+    assert len(res) == 3
+
+
 # ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------

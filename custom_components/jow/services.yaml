@@ -170,6 +170,32 @@ suggest:
       default: true
       selector:
         boolean:
+    max_calories:
+      name: Calories maximum
+      description: >-
+        Contrainte forte sur le choix final : la recette planifiée doit
+        faire au plus ce nombre de kcal par personne. L'agent de sélection
+        la reçoit aussi comme instruction ; le choix est vérifié en dur
+        après récupération des calories (avec recherche d'alternative
+        conforme si nécessaire).
+      selector:
+        number:
+          min: 100
+          max: 2000
+          step: 10
+          unit_of_measurement: kcal
+    max_total_time:
+      name: Temps total maximum
+      description: >-
+        Filtre dur appliqué avant la sélection : les recettes dont
+        préparation + cuisson dépasse cette durée (minutes) sont écartées.
+        Si aucune ne convient, le filtre est ignoré (loggué).
+      selector:
+        number:
+          min: 5
+          max: 240
+          step: 5
+          unit_of_measurement: min
     limit:
       name: Nombre de résultats
       default: 5

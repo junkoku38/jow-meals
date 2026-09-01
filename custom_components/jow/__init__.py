@@ -217,6 +217,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
             ai_prompt=call.data.get("ai_prompt", ""),
             overwrite=call.data.get("overwrite", True),
+            max_calories=call.data.get("max_calories"),
+            max_total_time=call.data.get("max_total_time"),
         )
         return {"recipes": results}
 
@@ -417,6 +419,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
             vol.Optional("ai_prompt"): cv.string,
             vol.Optional("overwrite", default=True): cv.boolean,
+            vol.Optional("max_calories"): vol.All(vol.Coerce(int), vol.Range(min=100, max=2000)),
+            vol.Optional("max_total_time"): vol.All(vol.Coerce(int), vol.Range(min=5, max=240)),
         }),
         supports_response=SupportsResponse.OPTIONAL,
     )

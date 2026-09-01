@@ -1017,7 +1017,12 @@ class JowManager:
             return ""
 
     async def _ai_pick_recipe(
-        self, criteria: str, recipes: list[dict], ai_ent: str, recent_names: list[str] | None = None
+        self,
+        criteria: str,
+        recipes: list[dict],
+        ai_ent: str,
+        recent_names: list[str] | None = None,
+        max_calories: int | None = None,
     ) -> dict | None:
         """Demande à l'agent IA de choisir la recette la plus adaptée.
 
@@ -1059,10 +1064,18 @@ class JowManager:
                 f"Plats déjà mangés récemment (évite de les reproposer si "
                 f"possible) : {', '.join(recent_names[:8])}.\n"
             )
+        cal_constraint = ""
+        if max_calories is not None:
+            cal_constraint = (
+                f"CONTRAINTE IMPÉRATIVE : la recette choisie doit faire au "
+                f"plus {max_calories} kcal par portion (les kcal sont "
+                f"indiquées quand elles sont connues) ; à défaut d'info, "
+                f"privilégie les plats légers.\n"
+            )
         instructions = (
             f"Un utilisateur demande : « {criteria or 'un bon repas'} ». "
             f"{f'Préférences : {self.preferences}. ' if self.preferences else ''}"
-            f"{recent}"
+            f"{recent}{cal_constraint}"
             "Voici les recettes disponibles :\n"
             f"{listing}\n\n"
             "Choisis LA recette qui correspond le mieux à la demande "
@@ -1102,6 +1115,8 @@ class JowManager:
         week_offset: int = 0,
         ai_prompt: str = "",
         overwrite: bool = True,
+        max_calories: int | None = None,
+        max_total_time: int | None = None,
     ) -> list[dict]:
         """Génère une requête Jow via l'IA puis cherche les recettes.
 
@@ -1260,6 +1275,39 @@ class JowManager:
                 recipes = filtered
                 _LOGGER.info("Recettes filtrées (interdits) : %d restantes", len(recipes))
 
+        # Filtre dur sur le temps total : preparationTime/cookingTime sont
+        # fournis par le flux de recherche, la contrainte est donc garantie.
+        # Si le filtre vide tout (ex: « rapide » sur des résultats longs),
+        # on le saute et on loggue plutôt que de renvoyer une liste vide.
+        if max_total_time is not None:
+            before = len(recipes)
+            before_time = recipes
+
+            def _total_time(r: dict) -> int | None:
+                prep = r.get("preparation_time") or 0
+                cook = r.get("cooking_time") or 0
+                return prep + cook if (prep or cook) else None
+
+            recipes = [r for r in recipes if (t := _total_time(r)) is not None and t <= max_total_time]
+            if recipes:
+                _LOGGER.info(
+                    "Filtre temps total ≤ %d min : %d/%d recettes conservées",
+                    max_total_time, len(recipes), before,
+                )
+            else:
+                _LOGGER.warning(
+                    "Filtre temps total ≤ %d min : aucune recette conforme, filtre ignoré",
+                    max_total_time,
+                )
+                recipes = before_time
+
+        # Les calories ne sont PAS dans le flux de recherche (endpoint
+        # détail, une requête par recette — trop lourd pour 100 résultats) :
+        # max_calories ne peut pas être un filtre dur ici. Il est passé à
+        # l'agent de sélection, qui voit les kcal quand elles sont connues
+        # (recettes déjà planifiées/choisies), et appliqué en dur par le
+        # seul endroit où la donnée existe : au moment de planifier.
+
         # Filtrer les recettes contenant des ingrédients à éviter (préférence)
         if self.avoid_ingredients:
             avoid = {e.lower().strip() for e in self.avoid_ingredients if e}
@@ -1282,8 +1330,16 @@ class JowManager:
         # re-ranking lexical ne comprend pas que « tofu croustillant
         # sauce siracha » est plus proche d'un burger asiatique demandé
         # qu'un burger mexicain). En cas d'échec IA, ordre conservé.
+        # max_calories : les kcal ne sont pas dans le flux de recherche —
+        # on le transmet comme contrainte forte à l'agent (il voit les
+        # kcal des recettes déjà connues), et le choix final est vérifié
+        # en dur après récupération des calories (endpoint détail).
         if ai_ent and len(recipes) > 1 and criteria:
-            picked = await self._ai_pick_recipe(criteria, recipes, ai_ent, recent_names=recent_names)
+            picked = await self._ai_pick_recipe(
+                criteria, recipes, ai_ent,
+                recent_names=recent_names,
+                max_calories=max_calories,
+            )
             if picked is not None and picked in recipes:
                 recipes.remove(picked)
                 recipes.insert(0, picked)
@@ -1310,6 +1366,39 @@ class JowManager:
                 calories = await self.async_fetch_calories(recipe_id)
                 if calories is not None:
                     chosen["calories"] = calories
+            # Filtre calories dur, a posteriori : les kcal ne sont connues
+            # qu'ici (endpoint détail). Si la choisie dépasse max_calories,
+            # on prend la première conforme — en triant par kcal connues
+            # croissantes quand plusieurs sont déjà renseignées.
+            if max_calories is not None and (chosen.get("calories") or 0) > max_calories:
+                _LOGGER.info(
+                    "Choix IA (%d kcal) > %d kcal : recherche d'une alternative",
+                    chosen.get("calories") or 0, max_calories,
+                )
+                alts = [r for r in recipes[1:] if r.get("calories") is not None and r["calories"] <= max_calories]
+                if alts:
+                    chosen = alts[0]
+                else:
+                    # Aucune alternative conforme : on énumère les suivantes
+                    # (kcal inconnues) jusqu'à en trouver une sous le seuil.
+                    for cand in recipes[1:]:
+                        cid = _safe_id(cand.get("id"))
+                        if not cid:
+                            continue
+                        cal = await self.async_fetch_calories(cid)
+                        if cal is not None:
+                            cand["calories"] = cal
+                            if cal <= max_calories:
+                                chosen = cand
+                                break
+                        # garde-fou : au plus 10 lookups détail supplémentaires
+                        if recipes.index(cand) > 10:
+                            break
+                    else:
+                        _LOGGER.warning(
+                            "Aucune recette ≤ %d kcal trouvée : le choix IA est conservé",
+                            max_calories,
+                        )
             self.plan[target_date.isoformat()] = chosen
             await self.async_save()
             _LOGGER.info(
