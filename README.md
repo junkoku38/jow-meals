@@ -81,7 +81,7 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 | `sensor.jow_ingredients_a_sauver` | Ingrédients périssables expirant sous 3 jours (anti-gaspillage, mode rescue) |
 | `sensor.jow_synchro` | Santé de la connexion jow.fr (`ok` / `token_expiré` / `sans_compte`) + attributs de divergence — base d'alertes |
 | `sensor.jow_compte` | Compte connecté, allergies/préférences synchronisées, agent IA |
-| `sensor.jow_panier_jow` | Panier/liste ouverte côté jow.fr |
+| `sensor.jow_plats_dans_jow` | Plats réels de la liste ouverte jow.fr (cache des synchros, avec le détail) |
 | `calendar.jow_menu` | **Le menu comme calendrier HA** — un événement par repas (19:00), automatisable nativement |
 | `todo.jow_courses` | Liste de courses, cochable, éditable |
 | `todo.jow_liste_approuvee` | Articles à toujours acheter (hors planning), fusionnés automatiquement avec `todo.jow_courses` lors du `refresh_shopping_list` |

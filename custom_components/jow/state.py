@@ -152,22 +152,39 @@ class JowAccountSensor(_JowStateSensorBase):
 
 
 class JowCartSensor(_JowStateSensorBase):
-    """Panier / liste ouverte côté jow.fr (nombre de plats, état)."""
+    """Plats de la liste ouverte jow.fr (le menu du compte).
+
+    Cache rempli par les services de synchro (import_menu / send_menu /
+    meal_done) — le capteur reflète l'état réel côté jow.fr, et retombe
+    sur le plan HA tant qu'aucune synchro n'a eu lieu.
+    """
 
     _attr_icon = "mdi:cart-outline"
 
     def __init__(self, manager: JowManager, entry: ConfigEntry) -> None:
         super().__init__(manager, entry)
-        self._attr_name = "Panier Jow"
+        self._attr_name = "Plats dans Jow"
         self._attr_unique_id = f"{entry.entry_id}_panier"
 
     @property
     def native_value(self) -> int | str:
-        # plat le plus récent du plan HA comme proxy tant que la liste
-        # ouverte n'est pas cachée ; le service import_menu la met à jour
         if not self._manager.is_authenticated:
             return "indisponible"
+        if self._manager.jow_open_meals:
+            return len(self._manager.jow_open_meals)
+        # aucune synchro encore : le plan HA est le meilleur reflet
         return len(self._manager.plan)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        meals = self._manager.jow_open_meals or []
+        return {
+            "source": "jow.fr (synchro)" if meals else "plan HA (aucune synchro récente)",
+            "plats": [
+                (m.get("recipe") or {}).get("title") or (m.get("recipe") or {}).get("name")
+                for m in meals[:20]
+            ],
+        }
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

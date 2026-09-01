@@ -451,6 +451,10 @@ class JowManager:
         # s'ils ne sont plus dans le planning (sinon l'IA les reproposait
         # immédiatement après effacement).
         self.rejected: list[dict] = []
+        # Cache de la liste ouverte jow.fr (menu du compte) — rempli par
+        # les services de synchro (import_menu/send_menu/meal_done),
+        # lu par le capteur d'état « Plats dans Jow ».
+        self.jow_open_meals: list[dict] = []
 
     @property
     def update_signal(self) -> str:
@@ -2281,6 +2285,7 @@ class JowManager:
                 data = resp.json().get("data", {})
                 osl = data.get("openShoppingList") or {}
                 existing_meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+                self.jow_open_meals = existing_meals  # cache pour le capteur d'état
             except ValueError:
                 existing_meals = []
 
@@ -2339,6 +2344,14 @@ class JowManager:
                 "Menu envoyé à Jow : %d plats ajoutés (liste réécrite avec %d au total)",
                 added, len(body_meals),
             )
+            # le cache suit la liste réécrite (recettes peuplées dans la réponse)
+            try:
+                rewritten = [m for m in (resp.json().get("meals") or [])
+                             if isinstance(m, dict)]
+                if rewritten:
+                    self.jow_open_meals = rewritten
+            except ValueError:
+                pass
             return added
         _LOGGER.warning(
             "Réécriture de la liste Jow échouée (HTTP %s) — la liste existante est préservée",
@@ -2399,6 +2412,7 @@ class JowManager:
             osl = data.get("openShoppingList") or {}
             if isinstance(osl, dict):
                 meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+                self.jow_open_meals = meals  # cache pour le capteur d'état
             # pendingMenu (si présent) en complément, dédupe par id de recette
             pm = data.get("pendingMenu")
             if isinstance(pm, dict):

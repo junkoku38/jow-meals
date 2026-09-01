@@ -12,6 +12,7 @@ supporté ; les chemins sont couverts par les tests d'API qui mockent
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -121,7 +122,7 @@ class JowClient:
             headers["x-jow-withmeta"] = withmeta
             return requests.post(
                 url, headers=headers, params=params or {},
-                data=body if isinstance(body, str) else __import__("json").dumps(body),
+                data=body if isinstance(body, str) else json.dumps(body),
                 timeout=timeout,
             )
 

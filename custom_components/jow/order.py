@@ -153,10 +153,15 @@ class JowOrderManager:
             return {"error": "reponse_illisible"}
 
     async def pay_order(self, order_id: str, confirm: bool = False) -> dict:
-        """PAIEMENT RÉEL — service jow.pay_order avec confirm explicite.
+        """PAIEMENT RÉEL — service jow.order_pay avec confirm explicite.
 
         Le schéma vol du service exige confirm: true : aucune
         automatisation ne peut payer sans ce flag écrit noir sur blanc.
+
+        Flux du site : pay → validate (la validation confirme la
+        commande côté jow.fr après le paiement). Elle est tentée
+        automatiquement après un pay 200 — si elle échoue, la réponse
+        le signale (order_id retourné pour rejouer validate).
         """
         if not confirm:
             return {"error": "confirmation_requise",
@@ -165,6 +170,34 @@ class JowOrderManager:
             return {"error": "order_id_manquant"}
         resp = await self._client.post(
             f"{JOW_API_BASE}/order/{order_id}/pay",
+            body={},
+            params={"availabilityZoneId": "FR"},
+        )
+        if resp is None:
+            return {"error": "token_jow_absent"}
+        if resp.status_code != 200:
+            return {"error": f"http_{resp.status_code}"}
+        try:
+            data = resp.json().get("data", {}) or {}
+        except ValueError:
+            return {"error": "reponse_illisible"}
+
+        # Validation post-paiement (best effort — signalée si refusée)
+        validation = await self.validate_order(order_id)
+        result = dict(data)
+        result["order_id"] = order_id
+        if validation.get("error"):
+            result["validation"] = f"à faire ({validation['error']})"
+        else:
+            result["validation"] = "ok"
+        return result
+
+    async def validate_order(self, order_id: str) -> dict:
+        """POST /order/{id}/validate — confirme la commande après paiement."""
+        if not order_id:
+            return {"error": "order_id_manquant"}
+        resp = await self._client.post(
+            f"{JOW_API_BASE}/order/{order_id}/validate",
             body={},
             params={"availabilityZoneId": "FR"},
         )
