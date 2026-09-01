@@ -227,6 +227,40 @@ def test_suggest_ai_pick_reorders_results():
     assert res[0]["name"] == "Burger au tofu croustillant, sauce siracha"
 
 
+def test_ai_pick_prompt_is_enriched():
+    """La liste fournie à l'IA contient ingrédients, temps et calories,
+    et le prompt mentionne les plats récents à varier."""
+    m = _manager()
+    m.preferences = "méditerranéenne"
+    recipes = [
+        {
+            "id": "r1", "name": "Poulet au citron",
+            "description": "Un classique familial",
+            "ingredients": [{"name": "poulet"}, {"name": "citron"}, {"name": "herbes"}],
+            "preparation_time": 15, "cooking_time": 25, "calories": 520,
+        },
+        {"id": "r2", "name": "Salade composée"},
+    ]
+    captured = {}
+
+    async def fake_generate(instructions, ai_ent, task_name="x"):
+        captured["prompt"] = instructions
+        return "1"
+
+    m._ai_generate = fake_generate
+    import asyncio
+
+    picked = asyncio.run(m._ai_pick_recipe("repas léger", recipes, "ai_task.x",
+                                           recent_names=["Curry lentilles"]))
+    assert picked and picked["id"] == "r1"
+    p = captured["prompt"]
+    assert "poulet, citron, herbes" in p          # ingrédients listés
+    assert "prép. 15 min" in p and "cuisson 25 min" in p  # temps
+    assert "520 kcal" in p                        # calories
+    assert "Curry lentilles" in p                 # plats récents
+    assert "méditerranéenne" in p                 # préférences
+
+
 # ---------------------------------------------------------------------------
 # Allergènes INCO (déduction heuristique depuis les tastes)
 # ---------------------------------------------------------------------------

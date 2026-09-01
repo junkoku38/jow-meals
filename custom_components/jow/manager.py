@@ -1016,30 +1016,60 @@ class JowManager:
             _LOGGER.warning("ai_task.generate_data a échoué : %s", err)
             return ""
 
-    async def _ai_pick_recipe(self, criteria: str, recipes: list[dict], ai_ent: str) -> dict | None:
+    async def _ai_pick_recipe(
+        self, criteria: str, recipes: list[dict], ai_ent: str, recent_names: list[str] | None = None
+    ) -> dict | None:
         """Demande à l'agent IA de choisir la recette la plus adaptée.
 
-        L'IA reçoit la demande utilisateur et la liste (titre + description,
-        max 30) des recettes filtrées, et retourne le numéro de la meilleure.
-        Retourne None en cas d'échec (l'appelant garde l'ordre du re-ranking).
+        L'IA reçoit la demande utilisateur et la liste (titre, description,
+        ingrédients principaux, temps, calories — max 30) des recettes
+        filtrées, ainsi que les plats récents à varier, et retourne le
+        numéro de la meilleure. Retourne None en cas d'échec (l'appelant
+        garde l'ordre du re-ranking).
         """
         if not recipes or not ai_ent:
             return None
         # 30 max : au-delà la liste devient bruitée pour l'agent et le
         # prompt explose en tokens.
         candidates = recipes[:30]
-        listing = "\n".join(
-            f"{i + 1}. {r.get('name', '')} — {(r.get('description') or '')[:100]}"
-            for i, r in enumerate(candidates)
-        )
+
+        def _describe(r: dict) -> str:
+            """Une ligne informative et compacte par recette."""
+            parts = []
+            if r.get("description"):
+                parts.append(r.get("description", "")[:90])
+            ings = [i.get("name", "") for i in r.get("ingredients", [])][:6]
+            if ings:
+                parts.append("ingr. : " + ", ".join(ings))
+            times = []
+            if r.get("preparation_time"):
+                times.append(f"prép. {r.get('preparation_time')} min")
+            if r.get("cooking_time"):
+                times.append(f"cuisson {r.get('cooking_time')} min")
+            if times:
+                parts.append(" · ".join(times))
+            if r.get("calories"):
+                parts.append(f"{r.get('calories')} kcal/pers")
+            return f"{r.get('name', '')}" + (f" ({' — '.join(parts)})" if parts else "")
+
+        listing = "\n".join(f"{i + 1}. {_describe(r)}" for i, r in enumerate(candidates))
+        recent = ""
+        if recent_names:
+            recent = (
+                f"Plats déjà mangés récemment (évite de les reproposer si "
+                f"possible) : {', '.join(recent_names[:8])}.\n"
+            )
         instructions = (
             f"Un utilisateur demande : « {criteria or 'un bon repas'} ». "
             f"{f'Préférences : {self.preferences}. ' if self.preferences else ''}"
+            f"{recent}"
             "Voici les recettes disponibles :\n"
             f"{listing}\n\n"
             "Choisis LA recette qui correspond le mieux à la demande "
-            "(style de cuisine, ingrédients, type de plat — un plat "
-            "approchant vaut mieux qu'un plat hors-sujet, même parfait). "
+            "(style de cuisine, ingrédients, type de plat, temps dispo — "
+            "un plat approchant vaut mieux qu'un plat hors-sujet, même "
+            "parfait ; varie par rapport aux plats récents si tu as le "
+            "choix). "
             "Réponds uniquement avec le numéro de la recette."
         )
         answer = await self._ai_generate(instructions, ai_ent, task_name="jow_recipe_pick")
@@ -1253,7 +1283,7 @@ class JowManager:
         # sauce siracha » est plus proche d'un burger asiatique demandé
         # qu'un burger mexicain). En cas d'échec IA, ordre conservé.
         if ai_ent and len(recipes) > 1 and criteria:
-            picked = await self._ai_pick_recipe(criteria, recipes, ai_ent)
+            picked = await self._ai_pick_recipe(criteria, recipes, ai_ent, recent_names=recent_names)
             if picked is not None and picked in recipes:
                 recipes.remove(picked)
                 recipes.insert(0, picked)
