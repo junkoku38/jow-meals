@@ -185,9 +185,3 @@ class JowCartSensor(_JowStateSensorBase):
                 for m in meals[:20]
             ],
         }
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {
-            "note": "Appeler jow.import_menu ou jow.send_menu pour détailler la liste ouverte réelle",
-        }
