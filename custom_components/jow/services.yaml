@@ -417,10 +417,11 @@ sync_calories:
 send_menu:
   name: Envoyer le menu à Jow
   description: >-
-    Envoie le planning de la semaine vers le compte Jow (jow.fr et app
-    mobile) — chaque recette part avec SA DATE et ses couverts (découvert
-    sur l'API : gol accepte {recipeId, date, covers}), le menu Jow se
-    remplit jour par jour au lieu d'entasser des plats sans date.
+    Envoie le planning de la semaine vers le menu du compte Jow
+    (jow.fr et app mobile). Fusion intelligente : les plats déjà présents
+    dans le menu Jow (ajoutés à la main) sont conservés, les plats HA
+    manquants sont ajoutés avec leurs couverts — rien n'est écrasé.
+    Réponse : nombre de plats réellement ajoutés.
   fields:
     week_offset:
       name: Décalage de semaine

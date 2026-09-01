@@ -2053,62 +2053,108 @@ class JowManager:
             return []
 
     async def async_send_menu_to_jow(self, week_offset: int = 0) -> int:
-        """Envoie le menu de la semaine au compte Jow via POST /gol?type=recipeChosen.
+        """Envoie le planning de la semaine au menu du compte Jow.
 
-        Chaque repas part avec sa DATE (découvert sur l'API : gol accepte
-        {recipeId, date, covers}) — le plat atterrit sur le bon jour du
-        menu jow.fr au lieu d'arriver orphelin. Retourne le nombre de
-        recettes envoyées.
+        Mécanisme découvert dans le code du site : le menu jow.fr EST la
+        « liste ouverte » (openShoppingList), réécrite par POST
+        /shoppinglist/open avec {meals: [{recipe, coversCount, source}]}.
+        Le gol des versions antérieures n'était qu'un tracker d'events —
+        les plats n'arrivaient jamais dans le menu.
+
+        Pour ne pas écraser les plats ajoutés à la main sur jow.fr : on
+        lit la liste ouverte, on y AJOUTE les plats HA manquants (dédupe
+        par id de recette), puis on re-POSTe l'union complète. Les
+        couverts des plats déjà présents sont conservés.
         """
         if not self.jow_token:
             _LOGGER.warning("Envoi menu Jow impossible : non authentifié")
             return 0
 
-        # (day, meal) planifiés — la date au format ISO attendu par l'API
-        entries = []
+        # 1) plats planifiés en HA pour la semaine visée
+        ha_meals = []
         for day in self.week_dates(week_offset):
             meal = self.get_meal(day)
             if meal and meal.get("id"):
-                entries.append((day.isoformat(), meal))
-
-        if not entries:
+                ha_meals.append(meal)
+        if not ha_meals:
             _LOGGER.warning("Aucun repas planifié à envoyer à Jow")
             return 0
 
-        def _send(date_iso: str, rid: str, covers):
+        # 2) lire la liste ouverte actuelle (route stable du site)
+        existing_meals: list[dict] = []
+        resp = await self._async_jow_get(
+            "https://api.jow.fr/public/profile/letscook",
+            params={"availabilityZoneId": "FR", "nbMeals": 40},
+        )
+        if resp is not None and resp.status_code == 200:
+            try:
+                data = resp.json().get("data", {})
+                osl = data.get("openShoppingList") or {}
+                existing_meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
+            except ValueError:
+                existing_meals = []
+
+        # 3) merger : plats existants conservés, plats HA ajoutés si absents
+        existing_ids = {
+            _safe_id((m.get("recipe") or {}).get("id") or (m.get("recipe") or {}).get("_id"))
+            for m in existing_meals
+        }
+        body_meals = []
+        for m in existing_meals:
+            r = m.get("recipe") or {}
+            rid = _safe_id(r.get("id") or r.get("_id"))
+            if not rid:
+                continue
+            body_meals.append({
+                "recipe": rid,
+                "coversCount": m.get("coversCount") or self.default_covers,
+                "source": m.get("source") or "jow",
+            })
+        added = 0
+        for meal in ha_meals:
+            if meal["id"] in existing_ids:
+                continue
+            body_meals.append({
+                "recipe": meal["id"],
+                "coversCount": meal.get("covers") or self.default_covers,
+                "source": "jow",
+            })
+            added += 1
+
+        if not added:
+            _LOGGER.info("Menu Jow déjà à jour (aucun plat HA à ajouter)")
+            return 0
+
+        # 4) réécrire la liste ouverte avec l'union
+        def _post():
             headers = self._jow_auth_headers()
-            headers["content-type"] = "text/plain;charset=UTF-8"
+            headers["content-type"] = "application/json"
             headers["x-jow-withmeta"] = "true"
-            payload = {"recipeId": rid, "date": date_iso}
-            if covers:
-                payload["covers"] = covers
-            resp = requests.post(
-                "https://api.jow.fr/public/gol",
+            headers["accept"] = "application/json, text/plain, */*"
+            return requests.post(
+                "https://api.jow.fr/public/shoppinglist/open",
                 headers=headers,
-                params={"type": "recipeChosen", "availabilityZoneId": "FR"},
-                data=json.dumps(payload),
-                timeout=15,
+                params={
+                    "populateRecipes": "true",
+                    "populateIngredients": "true",
+                    "availabilityZoneId": "FR",
+                },
+                data=json.dumps({"meals": body_meals}),
+                timeout=20,
             )
-            return resp.status_code
 
-        tasks = [
-            self.hass.async_add_executor_job(_send, date_iso, meal["id"], meal.get("covers"))
-            for date_iso, meal in entries
-        ]
-        statuses = await asyncio.gather(*tasks, return_exceptions=True)
-        sent = 0
-        for (date_iso, meal), status in zip(entries, statuses, strict=False):
-            if isinstance(status, Exception):
-                _LOGGER.warning("Envoi recette %s à Jow échoué : %s", meal.get("id"), status)
-            elif status in (200, 204):
-                sent += 1
-            else:
-                _LOGGER.warning(
-                    "Envoi recette %s (%s) à Jow : status %s", meal.get("id"), date_iso, status
-                )
-
-        _LOGGER.info("Menu envoyé à Jow : %d/%d recettes (avec dates)", sent, len(entries))
-        return sent
+        resp = await self.hass.async_add_executor_job(_post)
+        if resp.status_code in (200, 201, 204):
+            _LOGGER.info(
+                "Menu envoyé à Jow : %d plats ajoutés (liste réécrite avec %d au total)",
+                added, len(body_meals),
+            )
+            return added
+        _LOGGER.warning(
+            "Réécriture de la liste Jow échouée (HTTP %s) — la liste existante est préservée",
+            resp.status_code,
+        )
+        return 0
 
     async def async_import_menu_from_jow(self, week_offset: int = 0) -> dict:
         """Importe le menu du compte Jow (plats ajoutés sur jow.fr/l'app).

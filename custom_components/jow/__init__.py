@@ -389,12 +389,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return {"updated": updated}
 
     async def handle_send_menu(call: ServiceCall) -> ServiceResponse:
-        """Envoie le menu de la semaine au compte Jow (avec dates)."""
+        """Envoie le planning au menu du compte Jow (fusion, sans écraser)."""
         mgr = _get_manager(hass, call, manager)
         sent = await mgr.async_send_menu_to_jow(
             call.data.get(ATTR_WEEK_OFFSET, 0)
         )
-        return {"sent": sent, "message": f"{sent} recettes envoyées à Jow"}
+        if sent:
+            return {"sent": sent, "message": f"{sent} plats ajoutés au menu Jow"}
+        return {"sent": 0, "message": "Menu Jow déjà à jour (aucun plat à ajouter)"}
 
     async def handle_expiring(call: ServiceCall) -> ServiceResponse:
         """Liste les ingrédients périssables du planning qui expirent bientôt."""
