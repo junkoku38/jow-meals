@@ -324,3 +324,100 @@ class JowClient:
             return data.get("availableProviders", []) or []
         except ValueError:
             return []
+
+    # ------------------------------------------------------------------
+    # Collections de recettes (vérifié sur l'API réelle, sept. 2026)
+    # ------------------------------------------------------------------
+    async def get_collections(self, user_id: str) -> list[dict]:
+        """GET /users/{id}/collections — les collections du compte.
+
+        Réponse : data.content = [{id, title, type (favorites/try-later/
+        default), isPrivate, permissions, recipes?}].
+        """
+        resp = await self.get(
+            f"{JOW_API_BASE}/users/{user_id}/collections",
+            params={"availabilityZoneId": "FR"},
+        )
+        if resp is None or resp.status_code != 200:
+            return []
+        try:
+            data = resp.json().get("data", {})
+            return data.get("content", []) or []
+        except ValueError:
+            return []
+
+    async def create_collection(self, user_id: str, title: str, is_private: bool = True) -> dict:
+        """POST /users/{id}/collections — crée une collection.
+
+        Corps (piège) : {collection: {title, isPrivate}} — un title à la
+        racine renvoie 500. Retourne la collection créée (avec id).
+        """
+        resp = await self.post(
+            f"{JOW_API_BASE}/users/{user_id}/collections",
+            body={"collection": {"title": title, "isPrivate": is_private}},
+            params={"availabilityZoneId": "FR"},
+        )
+        if resp is None or resp.status_code != 200:
+            return {"error": f"http_{resp.status_code if resp is not None else 'sans_token'}"}
+        try:
+            data = resp.json().get("data", {})
+            coll = data.get("collection") or data
+            return coll if isinstance(coll, dict) else {"error": "reponse_illisible"}
+        except ValueError:
+            return {"error": "reponse_illisible"}
+
+    async def populate_collection(self, user_id: str, recipe_id: str,
+                                  collections_ids: list[str], source: str = "jow") -> dict:
+        """POST /users/{id}/collections/populate — recette dans des collections.
+
+        Corps : {recipeId, source, collectionsIds}.
+        ⚠️ PIÈGE VÉRIFIÉ : ne PAS passer availabilityZoneId en query string —
+        avec le param, l'API répond 200 mais n'écrit que les collections
+        système (favoris) en ignorant les collections custom.
+        """
+        resp = await self.post(
+            f"{JOW_API_BASE}/users/{user_id}/collections/populate",
+            body={"recipeId": recipe_id, "source": source,
+                  "collectionsIds": collections_ids},
+        )
+        if resp is None or resp.status_code != 200:
+            return {"error": f"http_{resp.status_code if resp is not None else 'sans_token'}"}
+        try:
+            return resp.json().get("data", {}) or {}
+        except ValueError:
+            return {"error": "reponse_illisible"}
+
+    async def get_collection(self, collection_id: str) -> dict:
+        """GET /collections/{id} — une collection avec ses recettes.
+
+        Réponse : data.content.collection = {…, recipes: [...]}.
+        """
+        resp = await self.get(
+            f"{JOW_API_BASE}/collections/{collection_id}",
+            params={"availabilityZoneId": "FR"},
+        )
+        if resp is None or resp.status_code != 200:
+            return {}
+        try:
+            content = resp.json().get("data", {}).get("content", {})
+            return content.get("collection", {}) or {}
+        except ValueError:
+            return {}
+
+    async def get_uploaded_recipes(self) -> list[dict]:
+        """GET /recipes/uploaded — ses recettes maison (créées via l'app).
+
+        La CRÉATION n'est pas exposée dans l'API web (feature app mobile :
+        import par scan/photo/URL) — lecture/édition/suppression seulement.
+        """
+        resp = await self.get(
+            f"{JOW_API_BASE}/recipes/uploaded",
+            params={"availabilityZoneId": "FR"},
+        )
+        if resp is None or resp.status_code != 200:
+            return []
+        try:
+            data = resp.json().get("data", {})
+            return data.get("recipes", []) or []
+        except ValueError:
+            return []

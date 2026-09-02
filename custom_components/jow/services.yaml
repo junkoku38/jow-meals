@@ -794,3 +794,113 @@ order_pay:
       name: Instance Jow
       selector:
         text:
+
+# ---------------------------------------------------------------------------
+# Collections de recettes Jow (v1.2) — testées sur l'API réelle
+# ---------------------------------------------------------------------------
+collections_list:
+  name: Lister mes collections Jow
+  description: >-
+    Collections de recettes du compte Jow (Mes favoris, À essayer plus
+    tard, collections perso) avec id, type et nombre de recettes.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+collection_create:
+  name: Créer une collection
+  description: >-
+    Crée une collection dans le compte Jow. Exemple : une collection
+    « Semaine 44 » avant d'y envoyer tout le menu du planning.
+  fields:
+    title:
+      name: Nom de la collection
+      required: true
+      selector:
+        text:
+    is_private:
+      name: Privée
+      description: Collection visible uniquement par vous (défaut true).
+      default: true
+      selector:
+        boolean:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+collection_add_recipe:
+  name: Ajouter une recette à des collections
+  description: >-
+    Ajoute une recette à une ou plusieurs collections Jow. La recette
+    vient soit de recipe_id (id Jow exact), soit du jour du planning HA
+    (weekday/week_offset) — « mets le plat de mardi dans ma collection ».
+  fields:
+    collections:
+      name: Collections (ids)
+      description: Ids des collections cibles (voir collections_list).
+      required: true
+      example: '["6a976bd7f75cc27fbbfafec1"]'
+      selector:
+        object:
+    recipe_id:
+      name: ID de recette
+      description: Id Jow de la recette (sinon, utiliser weekday).
+      selector:
+        text:
+    weekday:
+      name: Jour du planning
+      description: Prend le plat planifié ce jour-là dans HA.
+      selector:
+        select:
+          options: [lundi, mardi, mercredi, jeudi, vendredi, samedi, dimanche]
+    week_offset:
+      name: Décalage de semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+collection_import:
+  name: Importer une collection
+  description: >-
+    Planifie les recettes d'une collection Jow sur les jours vides du
+    planning HA (semaine visée). Mêmes garanties que l'import de menu :
+    jamais d'écrasement, dédoublonnage contre tout le planning et les
+    rejets, rapport importé/ignorés/restants.
+  fields:
+    collection_id:
+      name: ID de collection
+      required: true
+      selector:
+        text:
+    week_offset:
+      name: Décalage de semaine
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:
+
+uploaded_recipes:
+  name: Mes recettes maison Jow
+  description: >-
+    Liste les recettes maison du compte (celles créées via l'app mobile
+    Jow — l'API web ne permet pas de les créer). Elles peuvent ensuite
+    être planifiées via plan_meal avec leur recipe_id.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:

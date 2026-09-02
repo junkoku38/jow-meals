@@ -239,7 +239,10 @@ Routes observées dans le bundle (non toutes testées — statut indiqué) :
 | `/feedback/recipe/{recipeId}` | POST | Noter une recette (`POST/DELETE /feedback/{id}/like` pour les likes) | non testé |
 | `/recipe/{id}/sendcard` | POST | Envoyer une carte recette (partage) | non testé |
 | `/recipe/report` | POST | Signaler une recette | non testé |
-| `/users/{userId}/collections` | GET/POST | Collections de recettes (`/populate`, `/follow`, `/{id}/modify`, `/{id}/archive`) | non testé |
+| `/users/{userId}/collections` | GET/POST | **Testé ✔** — lecture : `data.content[]` ; création (v1.2) : corps `{collection: {title, isPrivate}}` (⚠️ title à la racine → 500) | ✔ |
+| `/users/{userId}/collections/populate` | POST | **Testé ✔** — `{recipeId, source, collectionsIds}`. ⚠️ **PIÈGE** : ne PAS passer `availabilityZoneId` en query — avec le param, l'API répond 200 mais n'écrit que les favoris, ignorant les collections custom | ✔ |
+| `/collections/{collectionId}` | GET | Lecture d'une collection + ses recettes : `data.content.collection.recipes[]` | ✔ |
+| `/recipes/uploaded` | GET | Recettes maison (créées via l'**app mobile** — la création n'est pas exposée dans l'API web ; PUT/DELETE sur existant) | ✔ |
 | `/users/{userId}/collections/favorites` | POST | Ajouter un favori (le DELETE existe-t-il ? à vérifier) | non testé |
 | `/share/link` | GET | Lien de partage du menu (`/recipe/{id}`, `/collection/{id}`, `/user/{id}`, `/meals`, `/details`) | non testé |
 | `/signup/magiclink` | POST | Magic link de connexion | non testé |

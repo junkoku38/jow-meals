@@ -38,6 +38,10 @@ from .const import (
     SERVICE_CLEAR_MEAL,
     SERVICE_CLEAR_RECENT,
     SERVICE_CLEAR_WEEK,
+    SERVICE_COLLECTION_ADD_RECIPE,
+    SERVICE_COLLECTION_CREATE,
+    SERVICE_COLLECTION_IMPORT,
+    SERVICE_COLLECTIONS_LIST,
     SERVICE_COPY_MEAL,
     SERVICE_EXCLUDE_INGREDIENT,
     SERVICE_EXPIRING,
@@ -61,6 +65,7 @@ from .const import (
     SERVICE_SYNC_FAVORITES,
     SERVICE_SYNC_PREFERENCES,
     SERVICE_SYNC_PROFILE,
+    SERVICE_UPLOADED_RECIPES,
     WEEKDAYS,
 )
 from .manager import JowManager, _recipe_to_dict
@@ -469,6 +474,46 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             confirm=call.data.get("confirm", False),
         )
 
+    async def handle_collections_list(call: ServiceCall) -> ServiceResponse:
+        """Liste les collections de recettes du compte Jow."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_list_collections()
+
+    async def handle_collection_create(call: ServiceCall) -> ServiceResponse:
+        """Crée une collection dans le compte Jow."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_create_collection(
+            title=call.data["title"],
+            is_private=call.data.get("is_private", True),
+        )
+
+    async def handle_collection_add_recipe(call: ServiceCall) -> ServiceResponse:
+        """Ajoute une recette (par id, ou le plat d'un jour du planning) à des collections."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_collection_add_recipe(
+            collections_ids=call.data["collections"],
+            recipe_id=call.data.get("recipe_id"),
+            weekday=call.data.get(ATTR_WEEKDAY),
+            week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+        )
+
+    async def handle_collection_import(call: ServiceCall) -> ServiceResponse:
+        """Importe une collection Jow sur les jours vides du planning HA."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_import_collection(
+            collection_id=call.data["collection_id"],
+            week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+        )
+
+    async def handle_uploaded_recipes(call: ServiceCall) -> ServiceResponse:
+        """Liste les recettes maison du compte (créées via l'app mobile)."""
+        mgr = _get_manager(hass, call, manager)
+        recipes = await mgr.async_get_uploaded_recipes()
+        return {"recipes": [
+            {"id": r.get("id"), "name": r.get("name"), "url": r.get("url")}
+            for r in recipes
+        ], "count": len(recipes)}
+
     async def handle_import_menu(call: ServiceCall) -> ServiceResponse:
         """Importe le menu de la semaine depuis le compte Jow (app/mobile)."""
         mgr = _get_manager(hass, call, manager)
@@ -528,6 +573,45 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ORDER_CREATE, handle_order_create,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_COLLECTIONS_LIST, handle_collections_list,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_COLLECTION_CREATE, handle_collection_create,
+        schema=vol.Schema({
+            vol.Required("title"): cv.string,
+            vol.Optional("is_private", default=True): cv.boolean,
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_COLLECTION_ADD_RECIPE, handle_collection_add_recipe,
+        schema=vol.Schema({
+            vol.Required("collections"): vol.All(cv.ensure_list_csv, [cv.string]),
+            vol.Optional("recipe_id"): cv.string,
+            vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_COLLECTION_IMPORT, handle_collection_import,
+        schema=vol.Schema({
+            vol.Required("collection_id"): cv.string,
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_UPLOADED_RECIPES, handle_uploaded_recipes,
         schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
         supports_response=SupportsResponse.ONLY,
     )
@@ -757,6 +841,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ORDER_CART,
                 SERVICE_ORDER_CREATE,
                 SERVICE_ORDER_PAY,
+                SERVICE_COLLECTIONS_LIST,
+                SERVICE_COLLECTION_CREATE,
+                SERVICE_COLLECTION_ADD_RECIPE,
+                SERVICE_COLLECTION_IMPORT,
+                SERVICE_UPLOADED_RECIPES,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
                 SERVICE_EXCLUDE_INGREDIENT,

@@ -30,7 +30,20 @@ def _stub_homeassistant() -> None:
     disp.async_dispatcher_connect = lambda *a, **k: (lambda: None)
     helpers.dispatcher = disp
     storage = types.ModuleType("homeassistant.helpers.storage")
-    storage.Store = MagicMock
+
+    class _StubStore:
+        """Store jouable (le MagicMock en classe plante en spec au call)."""
+        def __init__(self, hass, version, key, data=None):
+            self.key = key
+            self._data = data
+
+        async def async_load(self):
+            return self._data
+
+        async def async_save(self, data):
+            self._data = data
+
+    storage.Store = _StubStore
     helpers.storage = storage
     ha.helpers = helpers
     sys.modules["homeassistant"] = ha
@@ -178,3 +191,100 @@ def test_order_pay_requires_confirmation():
     # confirm True sans order_id : refus aussi
     res2 = asyncio.run(om.pay_order(order_id="", confirm=True))
     assert res2["error"] == "order_id_manquant"
+
+# ---------------------------------------------------------------------------
+# Collections (v1.2)
+# ---------------------------------------------------------------------------
+
+def test_collection_populate_body_no_zone_param():
+    """PIÈGE vérifié sur l'API : le populate doit partir SANS param de zone
+    en query — avec, l'API répond 200 en ignorant les collections custom."""
+    import asyncio
+
+    h = _ClientHarness()
+    seen = {}
+
+    def fake_post(url, headers=None, params=None, data=None, timeout=None, auth=None):
+        seen["url"] = url
+        seen["params"] = params
+        class R:
+            status_code = 200
+            def json(self):
+                return {"data": {"recipesInCollections": {}}}
+        return R()
+
+    api.requests.post = fake_post
+    res = asyncio.run(h.client.populate_collection("uid1", "r1", ["c1"]))
+    assert seen["url"].endswith("/users/uid1/collections/populate")
+    assert seen["params"] in (None, {}), f"params doit être vide, reçu {seen['params']}"
+    assert res == {"recipesInCollections": {}}
+
+
+def test_collection_create_wraps_body():
+    """Le corps de création est {collection: {title, isPrivate}} (piège 500)."""
+    import asyncio, json as _json
+
+    h = _ClientHarness()
+    seen = {}
+
+    def fake_post(url, headers=None, params=None, data=None, timeout=None, auth=None):
+        seen["body"] = _json.loads(data)
+        class R:
+            status_code = 200
+            def json(self):
+                return {"data": {"collection": {"id": "c9", "title": "Semaine HA"}}}
+        return R()
+
+    api.requests.post = fake_post
+    coll = asyncio.run(h.client.create_collection("uid1", "Semaine HA", True))
+    assert seen["body"] == {"collection": {"title": "Semaine HA", "isPrivate": True}}
+    assert coll["id"] == "c9"
+
+
+def test_import_collection_dedupes_and_fills():
+    """L'import de collection remplit les jours vides, dédoublonne contre le
+    planning entier et les rejets, et conserve le reste (remaining)."""
+    import sys
+    import types
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    # charger le manager comme test_manager le fait
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
+    import test_manager as tm
+
+    # le stub HA de test_manager (Store propre) doit être actif avant
+    # toute construction de JowManager — c'est déjà le cas : son import
+    # l'installe. On utilise sa factory.
+    m = tm._manager()
+    m.jow_token = "tok"   # le garde d'auth de l'import
+
+    lundi = m.week_dates(0)[0].isoformat()
+    mardi = m.week_dates(0)[1].isoformat()
+    m.plan = {lundi: {"id": "deja", "name": "Déjà planifié"}}
+    m.rejected = [{"id": "rej", "name": "Rejeté", "ts": 9999999999}]
+
+    # la collection contient 5 recettes : deja, rej, A, B, C
+    recipes = [
+        {"id": "deja", "title": "Déjà planifié"},
+        {"id": "rej", "title": "Rejeté"},
+        {"id": "A", "title": "Plat A"},
+        {"id": "B", "title": "Plat B"},
+        {"id": "C", "title": "Plat C"},
+    ]
+
+    # mock du client : get_collection renvoie nos recettes
+    class FakeClient:
+        async def get_collection(self, cid):
+            return {"title": "Semaine HA", "recipes": recipes}
+    m.api_client = lambda: FakeClient()
+
+    res = asyncio.run(m.async_import_collection("coll1", week_offset=0))
+    # 6 jours vides dans la semaine : A, B et C entrent tous, remaining = 0
+    assert res["imported"] == 3
+    assert res["remaining"] == 0
+    assert m.plan[mardi]["name"] == "Plat A"
+    # jamais d'écrasement ni de doublon :
+    assert m.plan[lundi]["name"] == "Déjà planifié"
+    assert "Rejeté" not in [mm.get("name") for mm in m.plan.values()]
+    assert m.last_import["source"].startswith("collection:")

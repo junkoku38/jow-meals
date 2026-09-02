@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import copy
 from datetime import date, timedelta
@@ -2166,6 +2167,145 @@ class JowManager:
             return resp.json().get("data", {})
         except ValueError:
             return None
+
+    async def _async_jow_user_id(self) -> str | None:
+        """userId Jow du compte connecté (payload du token, repli profil)."""
+        try:
+            payload = self.jow_token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            data = json.loads(base64.urlsafe_b64decode(payload))
+            uid = data.get("userId")
+            if uid:
+                return uid
+        except Exception:
+            pass
+        profile = await self.async_get_jow_profile()
+        return (profile or {}).get("userId") or (profile or {}).get("_id")
+
+    # ------------------------------------------------------------------
+    # Collections de recettes Jow (v1.2)
+    # ------------------------------------------------------------------
+    async def async_list_collections(self) -> dict:
+        """Liste les collections du compte (avec recettes si fournies)."""
+        if not self.jow_token:
+            return {"collections": [], "error": "token_jow_absent"}
+        uid = await self._async_jow_user_id()
+        if not uid:
+            return {"collections": [], "error": "user_id_indisponible"}
+        colls = await self.api_client().get_collections(uid)
+        return {"collections": [
+            {
+                "id": c.get("id"),
+                "title": c.get("title"),
+                "type": c.get("type"),
+                "is_private": c.get("isPrivate"),
+                "recettes": len(c.get("recipes") or []),
+            }
+            for c in colls if isinstance(c, dict)
+        ]}
+
+    async def async_create_collection(self, title: str, is_private: bool = True) -> dict:
+        """Crée une collection dans le compte Jow."""
+        if not self.jow_token:
+            return {"error": "token_jow_absent"}
+        uid = await self._async_jow_user_id()
+        if not uid:
+            return {"error": "user_id_indisponible"}
+        coll = await self.api_client().create_collection(uid, title, is_private)
+        if coll.get("error"):
+            return coll
+        _LOGGER.info("Collection Jow créée : %s (%s)", coll.get("title"), coll.get("id"))
+        return {"id": coll.get("id"), "title": coll.get("title")}
+
+    async def async_collection_add_recipe(
+        self, collections_ids: list[str], recipe_id: str | None = None,
+        weekday: str | None = None, week_offset: int = 0,
+    ) -> dict:
+        """Ajoute une recette à des collections Jow.
+
+        La recette vient soit de recipe_id, soit du jour du planning HA
+        (weekday/week_offset) — « mets le plat de mardi dans mes
+        collections » sans connaître l'id.
+        """
+        if not self.jow_token:
+            return {"error": "token_jow_absent"}
+        rid = recipe_id
+        if not rid and weekday and weekday in WEEKDAYS:
+            day = self.week_dates(week_offset)[WEEKDAYS.index(weekday)]
+            meal = self.get_meal(day)
+            rid = (meal or {}).get("id")
+        if not rid:
+            return {"error": "recette_introuvable",
+                    "aide": "recipe_id ou weekday (jour planifié) requis"}
+        uid = await self._async_jow_user_id()
+        if not uid:
+            return {"error": "user_id_indisponible"}
+        result = await self.api_client().populate_collection(uid, rid, list(collections_ids))
+        if result.get("error"):
+            return result
+        return {"added": True, "recipe_id": rid, "collections": list(collections_ids)}
+
+    async def async_import_collection(self, collection_id: str, week_offset: int = 0) -> dict:
+        """Importe les recettes d'une collection Jow sur les jours vides.
+
+        Même garantie que l'import de menu : dédoublonnage global contre
+        tout le planning HA + les rejets, jamais d'écrasement, les
+        recettes excédentaires restent disponibles (remaining).
+        """
+        if not self.jow_token:
+            return {"imported": 0, "error": "token_jow_absent"}
+        coll = await self.api_client().get_collection(collection_id)
+        recipes = [r for r in (coll.get("recipes") or []) if isinstance(r, dict)]
+        if not recipes:
+            return {"imported": 0, "error": None, "note": "collection_vide"}
+
+        already_planned = {
+            meal.get("id") for meal in self.plan.values()
+            if isinstance(meal, dict) and meal.get("id")
+        }
+        rejected_ids = {r.get("id") for r in self.rejected}
+        eligible = [
+            r for r in recipes
+            if _safe_id(r.get("id") or r.get("_id")) not in already_planned | rejected_ids
+        ]
+
+        imported = 0
+        for day in self.week_dates(week_offset):
+            if not eligible:
+                break
+            if self.plan.get(day.isoformat()):
+                continue
+            r = eligible.pop(0)
+            rid = _safe_id(r.get("id") or r.get("_id"))
+            if not rid:
+                continue
+            stored = _recipe_to_dict(r, self.default_covers)
+            if stored:
+                self.plan[day.isoformat()] = stored
+                imported += 1
+
+        if imported:
+            await self.async_save()
+        from datetime import datetime as _dt
+        self.last_import = {
+            "ts": _dt.now().isoformat(timespec="seconds"),
+            "imported": imported,
+            "source": f"collection:{coll.get('title', collection_id)}",
+        }
+        return {
+            "imported": imported,
+            "skipped": len(recipes) - len(eligible) - imported,
+            "remaining": len(eligible),
+            "collection": coll.get("title"),
+            "error": None,
+        }
+
+    async def async_get_uploaded_recipes(self) -> list[dict]:
+        """Recettes maison du compte (créées via l'app mobile Jow)."""
+        if not self.jow_token:
+            return []
+        raw = await self.api_client().get_uploaded_recipes()
+        return [_recipe_to_dict(r, self.default_covers) for r in raw if isinstance(r, dict)]
 
     async def async_sync_preferences_from_jow(self) -> None:
         """Synchronise allergies et préférences depuis le compte Jow.
