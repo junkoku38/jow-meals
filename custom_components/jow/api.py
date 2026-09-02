@@ -427,10 +427,13 @@ class JowClient:
         """GET /collections/{id} — une collection avec ses recettes.
 
         Réponse : data.content.collection = {…, recipes: [...]}.
+        ⚠️ PIÈGE VÉRIFIÉ : sans limit, le serveur ne renvoie que les 5
+        dernières recettes (tri par ajout) — une collection de 7 plats
+        paraissait en avoir 5 ! limit=50 pour tout voir.
         """
         resp = await self.get(
             f"{JOW_API_BASE}/collections/{collection_id}",
-            params={"availabilityZoneId": "FR"},
+            params={"availabilityZoneId": "FR", "populateRecipes": "true", "limit": "50"},
         )
         if resp is None or resp.status_code != 200:
             return {}
