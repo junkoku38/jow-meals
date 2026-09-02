@@ -88,36 +88,11 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 
 ## Commande d'ingrédients (partenaires)
 
-### Commander depuis HA — la méthode (v1.4, ÉTAT EXPÉRIMENTAL)
+### Commande d'ingrédients — état : lecture uniquement
 
-Les sessions magasin jow exigent un login enseigne avec MFA dans un navigateur réel (reCAPTCHA Enterprise + OTP) : impossible en headless (vérifié). La méthode en 2 outils — **validée jusqu'à la demande de MFA ; la suite (callback, import, order_*) est à confirmer au premier usage réel** :
+L'API jow attache les sessions magasin au navigateur (cookie sticky + MFA par webview) : **la commande se fait sur jow.fr ou l'app mobile** (votre menu y est synchronisé). Les services `order_*` restent disponibles pour la lecture (enseignes) — les écritures renverront un diagnostic explicite tant que la politique de jow ne change pas.
 
-1. **`scripts/jow_marchand.py`** (sur ton PC, ~1× par mois) :
-   ```bash
-   pip install playwright requests && playwright install chromium
-   python jow_marchand.py --email ton_email_enseigne
-   # un Chrome s'ouvre → tape ton mot de passe + ton CODE MFA
-   # le script capture tokens + cookie et met à jour HA tout seul
-   ```
-   (options : `--ha-url`, `--ha-token` pour la mise à jour automatique via `jow.import_token`)
-2. **Dans HA** : la session magasin étant partagée (même cookie/nœud), la chaîne devient active :
-   `jow.order_slots` (créneaux) → `jow.order_cart` (panier depuis le menu) → `jow.order_create` (commande non payée) → paiement sur jow.fr ou `jow.order_pay` avec `confirm: true`.
-
-Chaîne de services (⚠️ les derniers touchent de vrais achats) :
-1. `jow.order_providers` — fournisseurs disponibles (lecture)
-2. `jow.order_slots` — créneaux du magasin configuré (lecture)
-3. `jow.order_cart` — ajoute les ingrédients du menu au panier fournisseur (sans engagement)
-4. `jow.order_create` — crée la commande **non payée** (visible sur jow.fr)
-5. `jow.order_pay` — **PAIEMENT RÉEL** : exige `confirm: true` explicite — aucune automatisation ne peut payer par accident
-
-## Mémoire des rejets et imports
-
-L'intégration mémorise 60 jours les plats **effacés sans être marqués faits** (« je ne veux pas de celui-là ») : ils ne sont plus proposés par les suggestions ni importés. Les plats *mangés* suivent l'anti-répétition standard (4 semaines).
-
-- **`jow.reset_rejects`** : vide la mémoire des rejets (repas mangés conservés). À appeler si des effacements en bloc (semaines vidées d'une traite, tests) ont marqués « refusés » des plats jamais réellement rejetés, ou si l'import semble bloqué.
-- **L'import de menu** (`jow.import_menu`) remplit les **jours vides de la semaine affichée** : les plats déjà planifiés sur cette même semaine et les rejets sont écartés ; un plat servi une autre semaine reste importable.
-
-## Blueprints d'automatisation
+## Blueprints## Blueprints d'automatisation
 
 Trois blueprints prêts à importer (Blueprints →Importer un blueprint, URL du fichier) :
 - **`jow_digest_matin`** — notification du matin : repas du soir, temps, kcal, périssables à sauver

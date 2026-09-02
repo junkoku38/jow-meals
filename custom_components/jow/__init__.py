@@ -54,7 +54,6 @@ from .const import (
     SERVICE_ORDER_CREATE,
     SERVICE_ORDER_PAY,
     SERVICE_ORDER_PROVIDERS,
-    SERVICE_ORDER_SESSION,
     SERVICE_ORDER_SLOTS,
     SERVICE_PLAN_MEAL,
     SERVICE_RECOMMENDATIONS,
@@ -178,13 +177,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Purge hebdomadaire du planning (indépendante du token Jow)
     manager.async_start_purge()
 
-    # Page d'authentification guidée (magasin) : /api/jow/auth
-    try:
-        from .auth_page import async_setup_page
-
-        async_setup_page(hass)
-    except Exception as err:  # noqa: BLE001
-        _LOGGER.warning("Page d'auth jow non enregistrée : %s", err)
     # Si on a un refresh token mais pas d'access token valide, on en
     # génère un immédiatement au démarrage.
     if manager.jow_refresh_token and not manager.is_authenticated:
@@ -472,37 +464,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_dispatcher_send(hass, mgr.update_signal)
         return {"imported": bool(ok), "session_magasin": bool(cookie)}
 
-    async def handle_order_session(call: ServiceCall) -> ServiceResponse:
-        """Prépare la commande partagée HA ⇄ navigateur.
-
-        Retourne le cookie JowSession de HA (à injecter dans le navigateur
-        via devtools) : une fois l'enseigne connectée dans CE navigateur,
-        la session magasin vit sur le même nœud serveur que HA et les
-        services order_* (cart/create) deviennent actifs. Puis tente la
-        création du panier — si la session magasin y est, tout est prêt.
-        """
-        mgr = _get_manager(hass, call, manager)
-        client = mgr.api_client()
-        cookie = client.jow_session_cookie
-        result: dict = {"cookie": cookie, "etapes": [
-            "1. Copiez la valeur du champ 'cookie' ci-dessous",
-            "2. jow.fr dans votre navigateur → F12 → Application → Cookies → api.jow.fr",
-            "3. Créez/modifiez le cookie 'JowSession' avec cette valeur (cochez HttpOnly si proposé)",
-            "4. Rechargez jow.fr puis connectez votre enseigne (Auchan/Courses U)",
-            "5. Revenez ici et appelez jow.order_prepare à nouveau : si 'cart' est rempli, c'est prêt",
-        ]}
-        # tenter la création du panier (si session magasin déjà visible)
-        from .order import JowOrderManager
-
-        om = JowOrderManager(client)
-        cart = await om.prepare_cart_from_menu()
-        if not cart.get("error"):
-            result["cart"] = cart
-        else:
-            result["cart"] = None
-            result["cart_erreur"] = cart.get("error")
-        return result
-
     async def handle_order_providers(call: ServiceCall) -> ServiceResponse:
         """Liste les fournisseurs de courses partenaires (Intermarché…)."""
         mgr = _get_manager(hass, call, manager)
@@ -673,11 +634,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional("session_cookie"): cv.string,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_ORDER_SESSION, handle_order_session,
-        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
-        supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_COLLECTIONS_LIST, handle_collections_list,
@@ -954,8 +910,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ORDER_CART,
                 SERVICE_ORDER_CREATE,
                 SERVICE_ORDER_PAY,
-                SERVICE_ORDER_SESSION,
-                SERVICE_IMPORT_TOKEN,
+                            SERVICE_IMPORT_TOKEN,
                 SERVICE_RESET_REJECTS,
                 SERVICE_COLLECTIONS_LIST,
                 SERVICE_COLLECTION_CREATE,

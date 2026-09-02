@@ -905,20 +905,6 @@ uploaded_recipes:
       selector:
         text:
 
-order_prepare:
-  name: Préparer la commande (cookie partagé)
-  description: >-
-    Retourne le cookie JowSession de HA et la marche à suivre pour le
-    partager avec votre navigateur (devtools). Une fois l'enseigne
-    connectée dans un navigateur portant CE cookie, la session magasin
-    vit sur le même nœud serveur que HA : ce service tente alors la
-    création du panier fournisseur depuis votre menu. Réponse :
-    cookie + étapes + état du panier (cart si la session y est).
-  fields:
-    entry_name:
-      name: Instance Jow
-      selector:
-        text:
 
 import_token:
   name: Importer un token marchand (script jow-marchand)

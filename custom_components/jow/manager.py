@@ -2299,17 +2299,32 @@ class JowManager:
 
         # pousser les 7 plats
         exported = 0
+        last_err = None
         for rid, name in meals:
             res = await self.api_client().populate_collection(uid, rid, [coll_id])
             if not res.get("error"):
                 exported += 1
             else:
+                last_err = res["error"]
                 _LOGGER.warning("Export semaine : %s non ajoutée (%s)", name, res["error"])
 
         _LOGGER.info(
             "Semaine exportée vers la collection « %s » : %d plats",
             title, exported,
         )
+        if exported == 0 and last_err and last_err.startswith("http_"):
+            return {
+                "collection": title,
+                "collection_id": coll_id,
+                "exported": 0,
+                "error": last_err,
+                "aide": "Écriture refusée par jow. Si une session enseigne "
+                        "(Auchan/Courses U) est active sur votre compte, "
+                        "déconnectez-la sur jow.fr (Paramètres → compte "
+                        "marchand) puis réessayez — les écritures de "
+                        "collections depuis Home Assistant sont bloquées "
+                        "tant qu'elle est active.",
+            }
         return {
             "collection": title,
             "collection_id": coll_id,
