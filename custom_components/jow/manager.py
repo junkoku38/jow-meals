@@ -2184,16 +2184,24 @@ class JowManager:
         if not uid:
             return {"collections": [], "error": "user_id_indisponible"}
         colls = await self.api_client().get_collections(uid)
-        return {"collections": [
-            {
+        out = []
+        for c in colls:
+            if not isinstance(c, dict):
+                continue
+            n_recipes = len(c.get("recipes") or [])
+            if not n_recipes and c.get("type") not in ("favorites", "try-later"):
+                # le listing ne porte pas les recettes : lecture détaillée
+                # (les collections système ne listent rien par ce biais)
+                detail = await self.api_client().get_collection(c.get("id"))
+                n_recipes = len(detail.get("recipes") or [])
+            out.append({
                 "id": c.get("id"),
                 "title": c.get("title"),
                 "type": c.get("type"),
                 "is_private": c.get("isPrivate"),
-                "recettes": len(c.get("recipes") or []),
-            }
-            for c in colls if isinstance(c, dict)
-        ]}
+                "recettes": n_recipes,
+            })
+        return {"collections": out}
 
     async def async_create_collection(self, title: str, is_private: bool = True) -> dict:
         """Crée une collection dans le compte Jow."""
