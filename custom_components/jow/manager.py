@@ -870,7 +870,7 @@ class JowManager:
         # 2) remplir chaque jour via le pipeline suggest complet
         planned: dict[str, str] = {}
         failures: dict[str, str] = {}
-        for _idx, day in enumerate(self.week_dates(week_offset)):
+        for idx, day in enumerate(self.week_dates(week_offset)):
             weekday = WEEKDAYS[idx]
             day_crit = (day_criteria or {}).get(weekday, criteria)
             try:
