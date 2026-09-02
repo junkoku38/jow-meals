@@ -2717,6 +2717,9 @@ class JowManager:
             "skipped": skipped_deja,
             "remaining": len(eligible),
         }
+        # réveiller les capteurs même sans import (le cache liste-ouverte
+        # a été rafraîchi : « Plats dans Jow » doit se mettre à jour)
+        async_dispatcher_send(self.hass, self.update_signal)
         _LOGGER.info(
             "Import menu Jow (letscook) : %d importés, %d écartés (déjà planifiés/rejetés), %d restants pour plus tard",
             imported, skipped_deja, len(eligible),
