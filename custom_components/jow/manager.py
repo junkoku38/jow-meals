@@ -2305,10 +2305,16 @@ class JowManager:
                 # populate avec liste VIDE = retrait de toutes les collections
                 await self.api_client().populate_collection(uid, rid, [])
 
-        # pousser les 7 plats
+        # pousser les plats : le populate n'accepte que les recettes
+        # déjà connues du compte (favori) — on ajoute d'abord au favori
+        # (route dédiée, corps observé sur le site), puis on référence
+        # dans la collection cible.
         exported = 0
         last_err = None
         for rid, name in meals:
+            fav = await self.api_client().add_recipe_to_favorites(uid, rid, selected_from="cookbook")
+            if fav.get("error"):
+                _LOGGER.debug("Favori %s : %s (continue)", rid, fav["error"])
             res = await self.api_client().populate_collection(uid, rid, [coll_id])
             if not res.get("error"):
                 exported += 1

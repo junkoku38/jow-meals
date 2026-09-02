@@ -457,3 +457,25 @@ class JowClient:
             return data.get("recipes", []) or []
         except ValueError:
             return []
+
+    async def add_recipe_to_favorites(self, user_id: str, recipe_id: str,
+                                      source: str = "jow", selected_from: str = "cookbook") -> dict:
+        """POST /users/{id}/collections/favorites — ajoute un favori.
+
+        Corps observé sur le site : {recipeId, source, selectedFrom}.
+        C'est LA porte d'entrée qui référence une recette quelconque
+        dans le compte — le populate (collections) n'accepte ensuite
+        que des recettes déjà connues (favori) : on ajoute donc au
+        favori PUIS on populate la collection cible.
+        """
+        resp = await self.post(
+            f"{JOW_API_BASE}/users/{user_id}/collections/favorites",
+            body={"recipeId": recipe_id, "source": source,
+                  "selectedFrom": selected_from},
+        )
+        if resp is None or resp.status_code != 200:
+            return {"error": f"http_{resp.status_code if resp is not None else 'sans_token'}"}
+        try:
+            return resp.json().get("data", {}) or {}
+        except ValueError:
+            return {"error": "reponse_illisible"}
