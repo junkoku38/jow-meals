@@ -314,6 +314,19 @@ preflight (vérifié via `OPTIONS`).
    refresh → retry), pas planifié.
 8. **`populateRecipes`/`populateIngredients`** requis en query sur
    l'écriture de liste pour que la réponse soit peuplée.
+9. **Sessions magasin liées au cookie navigateur (sticky session) —
+   LA limite majeure** : les refresh tokens `provider` (auchan/coursesu)
+   et TOUTES les routes `/provider/*` et de commande exigent le cookie
+   `JowSession` posé lors du login enseigne dans le navigateur. Sans ce
+   cookie (client API type intégration), même un token valide renvoie
+   `EXPIRED_USER_SESSION` / 401. **Conséquence** : une intégration ne
+   peut pas piloter la commande complète — le menu oui (synchro,
+   planification, liste ouverte), le paiement non (navigateur jow.fr).
+   Par ailleurs, chaque refresh d'une session remplace la session active
+   du compte : ne jamais rafraîchir depuis deux clients différents
+   (navigateur + intégration) sous peine de déconnexion mutuelle —
+   l'intégration doit être l'unique source de refresh du token Google,
+   et la session magasin vit dans le navigateur.
 
 ---
 

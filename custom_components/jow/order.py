@@ -62,7 +62,12 @@ class JowOrderManager:
             return {"error": "token_jow_absent"}
         if resp.status_code != 200:
             return {"error": f"http_{resp.status_code}",
-                    "aide": "Configurez votre magasin sur jow.fr d'abord"}
+                    "aide": "Session marchande requise : connectez l'enseigne "
+                            "sur jow.fr. NOTE : les sessions magasin jow sont "
+                            "liées au cookie navigateur (sticky session) — la "
+                            "commande complète (panier → paiement) doit être "
+                            "finalisée sur jow.fr ; HA pilote le menu, pas le "
+                            "paiement."}
         try:
             return {"slots": resp.json().get("data", []) or []}
         except ValueError:
