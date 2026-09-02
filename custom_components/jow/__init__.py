@@ -176,6 +176,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await manager.async_purge_old()
     # Purge hebdomadaire du planning (indépendante du token Jow)
     manager.async_start_purge()
+
+    # Page d'authentification guidée (magasin) : /api/jow/auth
+    try:
+        from .auth_page import async_setup_page
+
+        async_setup_page(hass)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Page d'auth jow non enregistrée : %s", err)
     # Si on a un refresh token mais pas d'access token valide, on en
     # génère un immédiatement au démarrage.
     if manager.jow_refresh_token and not manager.is_authenticated:
