@@ -2346,12 +2346,16 @@ class JowManager:
             "error": None,
         }
 
-    async def async_import_collection(self, collection_id: str, week_offset: int = 0) -> dict:
-        """Importe les recettes d'une collection Jow sur les jours vides.
+    async def async_import_collection(
+        self, collection_id: str, week_offset: int = 0, overwrite: bool = False,
+    ) -> dict:
+        """Importe les recettes d'une collection Jow sur la semaine visée.
 
-        Même garantie que l'import de menu : dédoublonnage global contre
-        tout le planning HA + les rejets, jamais d'écrasement, les
-        recettes excédentaires restent disponibles (remaining).
+        Par défaut : jours VIDES seulement (jamais d'écrasement).
+        overwrite=True : remplace les repas existants de la semaine —
+        les anciens sont mémorisés comme REJETS (anti-répétition 60 j)
+        pour que l'« application d'une collection » ne repropose pas les
+        plats remplacés.
         """
         if not self.jow_token:
             return {"imported": 0, "error": "token_jow_absent"}
@@ -2360,6 +2364,15 @@ class JowManager:
         if not recipes:
             return {"imported": 0, "error": None, "note": "collection_vide"}
 
+        # avec overwrite, on vide d'abord (les repas remplacés deviennent
+        # rejets → exclus par rejected_ids) ; sinon jours vides seulement
+        replaced = 0
+        if overwrite:
+            for day in self.week_dates(week_offset):
+                meal = self.plan.pop(day.isoformat(), None)
+                if meal and meal.get("id"):
+                    self._remember_rejected(meal)
+                    replaced += 1
         week_ids = {
             (meal or {}).get("id")
             for day in self.week_dates(week_offset)
@@ -2400,9 +2413,11 @@ class JowManager:
         }
         return {
             "imported": imported,
+            "replaced": replaced,
             "skipped": len(recipes) - len(eligible) - imported,
             "remaining": len(eligible),
             "collection": coll.get("title"),
+            "recettes_collection": [r.get("title") or r.get("name") for r in recipes[:15]],
             "error": None,
         }
 

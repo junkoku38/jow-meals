@@ -549,6 +549,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return await mgr.async_import_collection(
             collection_id=call.data["collection_id"],
             week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+            overwrite=call.data.get("overwrite", False),
         )
 
     async def handle_uploaded_recipes(call: ServiceCall) -> ServiceResponse:
@@ -675,6 +676,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         schema=vol.Schema({
             vol.Required("collection_id"): cv.string,
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional("overwrite", default=False): cv.boolean,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.ONLY,

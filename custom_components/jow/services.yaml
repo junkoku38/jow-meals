@@ -871,16 +871,24 @@ collection_add_recipe:
 collection_import:
   name: Importer une collection
   description: >-
-    Planifie les recettes d'une collection Jow sur les jours vides du
-    planning HA (semaine visée). Mêmes garanties que l'import de menu :
-    jamais d'écrasement, dédoublonnage contre tout le planning et les
-    rejets, rapport importé/ignorés/restants.
+    Planifie les recettes d'une collection Jow sur la semaine visée.
+    Par défaut : jours vides seulement. overwrite: true remplace les
+    repas existants (les anciens sont mémorisés comme rejets).
   fields:
     collection_id:
       name: ID de collection
       required: true
       selector:
         text:
+    overwrite:
+      name: Remplacer la semaine
+      description: >-
+        true : vide la semaine visée (repas remplacés mémorisés comme
+        rejets) avant d'appliquer la collection. false : jours vides
+        seulement.
+      default: false
+      selector:
+        boolean:
     week_offset:
       name: Décalage de semaine
       default: 0
