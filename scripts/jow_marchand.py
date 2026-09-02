@@ -27,7 +27,7 @@ Prérequis (une seule fois) :
     playwright install chromium
 
 Usage :
-    python jow-marchand.py --email shikyoo@free.fr --password "TON_MDP"
+    python jow-marchand.py --email ton_email_enseigne --password "TON_MDP"
     # ou tout est demandé interactivement si omis
     # HA : --ha-url http://192.168.1.115:8123 --ha-token "TOKEN_LLAT"
 

@@ -95,7 +95,7 @@ Les sessions magasin jow exigent un login enseigne avec MFA dans un navigateur r
 1. **`scripts/jow_marchand.py`** (sur ton PC, ~1× par mois) :
    ```bash
    pip install playwright requests && playwright install chromium
-   python jow_marchand.py --email shikyoo@free.fr
+   python jow_marchand.py --email ton_email_enseigne
    # un Chrome s'ouvre → tape ton mot de passe + ton CODE MFA
    # le script capture tokens + cookie et met à jour HA tout seul
    ```
