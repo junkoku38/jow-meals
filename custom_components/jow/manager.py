@@ -2296,6 +2296,9 @@ class JowManager:
 
         coll_id = target.get("id")
         # vider la collection existante : retirer chaque recette courante
+        # puis ATTENDRE la propagation serveur (le retrait est asynchrone :
+        # sans attente, les 1-2 premiers ajouts suivants étaient écrasés
+        # par le retrait en retard — collections partielles 5/7)
         existing = await self.api_client().get_collection(coll_id)
         for r in (existing.get("recipes") or []):
             if not isinstance(r, dict):
@@ -2304,6 +2307,16 @@ class JowManager:
             if rid:
                 # populate avec liste VIDE = retrait de toutes les collections
                 await self.api_client().populate_collection(uid, rid, [])
+        import asyncio as _aio
+        for _try in range(6):
+            await _aio.sleep(1.5)
+            recheck = await self.api_client().get_collection(coll_id)
+            if not (recheck.get("recipes") or []):
+                break
+            _LOGGER.debug(
+                "Export : retrait en propagation (%d recettes restantes)",
+                len(recheck.get("recipes") or []),
+            )
 
         # pousser les plats : le populate n'accepte que les recettes
         # déjà connues du compte (favori) — on ajoute d'abord au favori
