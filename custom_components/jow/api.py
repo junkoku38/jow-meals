@@ -8,6 +8,16 @@ ici non encore consommées servent aux prochaines étapes (commande,
 courses enrichies). Les pièges de l'API sont documentés dans
 docs/jow-api.md.
 
+**Cookie JowSession (sticky session)** — découverte déterminante :
+l'API pose un cookie `JowSession` à chaque refresh (Set-Cookie), qui
+route les requêtes vers LE nœud serveur qui connaît la session. Les
+sessions magasin vivent sur le nœud du cookie posé lors du login
+enseigne : pour qu'une intégration puisse utiliser la session
+magasin, elle doit (a) conserver son propre cookie (jar persistant)
+et (b) l'utilisateur connecte l'enseigne dans un navigateur auquel on
+a injecté CE cookie (devtools → Application → Cookies) — la session
+enseigne s'attache alors au même nœud et devient visible de HA.
+
 `requests` synchrone dans l'executor : choix documenté (pattern HA
 supporté ; couvert par les tests qui mockent requests au niveau module).
 """
@@ -59,15 +69,25 @@ _BASE_HEADERS = {
 
 
 class JowClient:
-    """Client HTTP Jow pour une instance (token + refresh)."""
+    """Client HTTP Jow pour une instance (token + refresh + cookie jar).
+
+    La `requests.Session` persiste le cookie JowSession posé par les
+    réponses (sticky session) : toutes les requêtes de l'instance routent
+    vers le même nœud serveur — condition pour voir la session magasin
+    (cf. docstring du module).
+    """
 
     def __init__(self, hass, get_access_token, get_refresh_token, on_token_refreshed=None):
         """hass : pour l'executor ; get_*_token : callbacks vers le manager ;
-        on_token_refreshed(token) : persiste le nouveau token."""
+        on_token_refreshed(token, new_refresh) : persiste les tokens."""
         self._hass = hass
         self._get_access = get_access_token
         self._get_refresh = get_refresh_token
         self._on_refreshed = on_token_refreshed
+        # cookie jar persistant (JowSession) — partagé par toutes les
+        # requêtes de cette instance, y compris les fonctions module-level
+        # (elles l'utilisent via self._session ci-dessous)
+        self._session = requests.Session()
 
     # ------------------------------------------------------------------
     # Primitives
@@ -100,7 +120,7 @@ class JowClient:
         def _get():
             headers = self._auth_headers()
             headers["x-jow-withmeta"] = withmeta
-            return requests.get(url, headers=headers, params=params or {}, timeout=timeout)
+            return self._session.get(url, headers=headers, params=params or {}, timeout=timeout)
 
         resp = await self._exec(_get)
         if resp.status_code == 401 and self._get_refresh():
@@ -122,7 +142,7 @@ class JowClient:
         def _post():
             headers = self._auth_headers() if auth else dict(_BASE_HEADERS)
             headers["x-jow-withmeta"] = withmeta
-            return requests.post(
+            return self._session.post(
                 url, headers=headers, params=params or {},
                 data=body if isinstance(body, str) else json.dumps(body),
                 timeout=timeout,
@@ -141,8 +161,10 @@ class JowClient:
             return None
 
         def _refresh():
-            # IMPORTANT : aucun header authorization ici (sinon 401)
-            return requests.post(
+            # IMPORTANT : aucun header authorization ici (sinon 401).
+            # La Session conserve le JowSession posé par cette réponse
+            # (Set-Cookie) : c'est LE cookie de routage de l'instance.
+            return self._session.post(
                 JOW_AUTH_REFRESH_URL,
                 headers=dict(_BASE_HEADERS),
                 params={"availabilityZoneId": "FR"},
@@ -175,7 +197,7 @@ class JowClient:
     async def search_recipes(self, query: str, limit: int = 50, start: int = 0) -> list[dict]:
         """quicksearch : publique, OU logique (voir pièges doc), 50/page."""
         def _search():
-            resp = requests.post(
+            resp = self._session.post(
                 JOW_SEARCH_URL,
                 headers=dict(_BASE_HEADERS),
                 params={"start": str(start), "availabilityZoneId": "FR",
@@ -200,7 +222,7 @@ class JowClient:
         def _fetch():
             headers = dict(_BASE_HEADERS)
             headers["x-jow-withmeta"] = "true"
-            resp = requests.get(
+            resp = self._session.get(
                 f"{JOW_RECIPE_URL}/{recipe_id}", headers=headers, timeout=10
             )
             resp.raise_for_status()
@@ -309,6 +331,20 @@ class JowClient:
         try:
             return resp.json().get("data", {})
         except ValueError:
+            return None
+
+    @property
+    def jow_session_cookie(self) -> str | None:
+        """Cookie JowSession courant de l'instance (pour injection navigateur).
+
+        L'utilisateur peut l'ajouter à son navigateur jow.fr (devtools →
+        Application → Cookies → api.jow.fr → JowSession) avant de connecter
+        son enseigne : la session magasin s'attachera au même nœud serveur
+        que HA, et les services order_* verront le magasin.
+        """
+        try:
+            return self._session.cookies.get("JowSession", domain=".jow.fr") or None
+        except Exception:
             return None
 
     # ------------------------------------------------------------------

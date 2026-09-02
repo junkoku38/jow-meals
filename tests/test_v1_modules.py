@@ -78,6 +78,30 @@ api = _load("api")
 # api.JowClient
 # ---------------------------------------------------------------------------
 
+class _FakeSession:
+    """Session factice (cookie jar) : les tests assignent fake_get/fake_post."""
+
+    def __init__(self):
+        self.fake_get = None
+        self.fake_post = None
+
+        class _Cookies(dict):
+            def get(self, name, domain=None):
+                return dict.get(self, name)
+
+        self.cookies = _Cookies()
+
+    def get(self, *a, **k):
+        if self.fake_get:
+            return self.fake_get(*a, **k)
+        raise AssertionError("fake_get non défini")
+
+    def post(self, *a, **k):
+        if self.fake_post:
+            return self.fake_post(*a, **k)
+        raise AssertionError("fake_post non défini")
+
+
 class _ClientHarness:
     """JowClient sur hass mocké, tokens pilotables, executor direct."""
 
@@ -93,6 +117,8 @@ class _ClientHarness:
             get_refresh_token=lambda: self.refresh,
             on_token_refreshed=self._on_refresh,
         )
+        # le client utilise un cookie jar persistant : session factice
+        self.client._session = _FakeSession()
 
     async def _on_refresh(self, token, new_refresh=None):
         self.refreshed_with = token
@@ -124,8 +150,8 @@ def test_client_get_refreshes_on_401():
                 return {"accessToken": "NEW"}
         return R()
 
-    api.requests.get = fake_get
-    api.requests.post = fake_refresh_post
+    h.client._session.fake_get = fake_get
+    h.client._session.fake_post = fake_refresh_post
     resp = asyncio.run(h.client.get("https://api.jow.fr/public/profile"))
     assert resp.status_code == 200
     assert calls == ["Bearer tok", "Bearer NEW"]
@@ -148,7 +174,7 @@ def test_client_refresh_without_authorization_header():
                 return {"accessToken": "FRESH", "refreshToken": "ROTATED"}
         return R()
 
-    api.requests.post = fake_post
+    h.client._session.fake_post = fake_post
     tok = asyncio.run(h.client.refresh_token())
     assert tok == "FRESH"
     assert "authorization" not in seen["headers"]
@@ -171,7 +197,7 @@ def test_client_search_recipes_uses_executor():
                 return {"data": {"content": [{"id": "r1", "title": "T"}]}}
         return R()
 
-    api.requests.post = fake_post
+    h.client._session.fake_post = fake_post
     res = asyncio.run(h.client.search_recipes("curry", limit=5))
     assert res and res[0]["id"] == "r1"
     assert seen["url"].endswith("/recipe/quicksearch")
@@ -213,7 +239,7 @@ def test_collection_populate_body_no_zone_param():
                 return {"data": {"recipesInCollections": {}}}
         return R()
 
-    api.requests.post = fake_post
+    h.client._session.fake_post = fake_post
     res = asyncio.run(h.client.populate_collection("uid1", "r1", ["c1"]))
     assert seen["url"].endswith("/users/uid1/collections/populate")
     assert seen["params"] in (None, {}), f"params doit être vide, reçu {seen['params']}"
@@ -235,7 +261,7 @@ def test_collection_create_wraps_body():
                 return {"data": {"collection": {"id": "c9", "title": "Semaine HA"}}}
         return R()
 
-    api.requests.post = fake_post
+    h.client._session.fake_post = fake_post
     coll = asyncio.run(h.client.create_collection("uid1", "Semaine HA", True))
     assert seen["body"] == {"collection": {"title": "Semaine HA", "isPrivate": True}}
     assert coll["id"] == "c9"

@@ -36,7 +36,15 @@ def _stub_homeassistant() -> None:
         "homeassistant.helpers.storage",
         Store=lambda *a, **k: MagicMock(),
     )
-    _make("requests", post=MagicMock(), get=MagicMock(), options=MagicMock())
+    # Session = vraie classe : api.py (tests v1) crée un cookie jar persistant ;
+    # on lui donne une requests.Session RÉELLE si le module existe, sinon un stub
+    try:
+        from requests import Session as _RealSession  # noqa: F401
+        _make("requests", post=MagicMock(), get=MagicMock(), options=MagicMock(),
+              Session=__import__("requests").Session)
+    except ImportError:
+        _make("requests", post=MagicMock(), get=MagicMock(), options=MagicMock(),
+              Session=MagicMock)
 
 
 _stub_homeassistant()
