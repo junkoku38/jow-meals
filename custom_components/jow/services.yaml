@@ -942,3 +942,18 @@ import_token:
       name: Instance Jow
       selector:
         text:
+
+reset_rejects:
+  name: Vider la mémoire des rejets
+  description: >-
+    Vide la liste des plats mémorisés comme refusés (60 jours d'origine).
+    Utile quand des effacements en bloc (semaines vidées d'une traite,
+    tests) ont marqué « refusés » des plats jamais réellement rejetés :
+    l'import de menu et les suggestions redeviennent libres de les
+    proposer. L'anti-répétition des repas MANGÉS (4 semaines) est
+    conservée.
+  fields:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:

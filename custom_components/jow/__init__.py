@@ -59,6 +59,7 @@ from .const import (
     SERVICE_RECOMMENDATIONS,
     SERVICE_REFRESH_SHOPPING_LIST,
     SERVICE_RENEW_WEEK,
+    SERVICE_RESET_REJECTS,
     SERVICE_SEARCH,
     SERVICE_SEND_MENU,
     SERVICE_SET_COVERS,
@@ -370,6 +371,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             "default_covers": mgr.default_covers,
         }
 
+    async def handle_reset_rejects(call: ServiceCall) -> ServiceResponse:
+        """Vide la mémoire des rejets (l'import et les suggestions repartent propres)."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_reset_rejects()
+
     async def handle_clear_recent(call: ServiceCall) -> ServiceResponse:
         """Retire un plat de l'anti-répétition (pourra être re-proposé)."""
         mgr = _get_manager(hass, call, manager)
@@ -630,6 +636,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ORDER_CREATE, handle_order_create,
+        schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESET_REJECTS, handle_reset_rejects,
         schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
         supports_response=SupportsResponse.ONLY,
     )
@@ -913,6 +924,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ORDER_PAY,
                 SERVICE_ORDER_SESSION,
                 SERVICE_IMPORT_TOKEN,
+                SERVICE_RESET_REJECTS,
                 SERVICE_COLLECTIONS_LIST,
                 SERVICE_COLLECTION_CREATE,
                 SERVICE_COLLECTION_ADD_RECIPE,

@@ -682,6 +682,19 @@ class JowManager:
             self._remember_rejected(meal)
         await self.async_save()
 
+    async def async_reset_rejects(self) -> dict:
+        """Vide la mémoire des rejets (les plats redeviennent proposables).
+
+        Utile quand des effacements en bloc (clear_week de test, menus
+        vidés d'une traite) ont marqué comme « refusés » des plats que
+        l'utilisateur n'a en fait jamais goûtés. L'anti-répétition des
+        repas MANGÉS (4 semaines) reste intacte.
+        """
+        n = len(self.rejected)
+        self.rejected = []
+        await self.async_save()
+        return {"cleared": n}
+
     def _remember_rejected(self, meal: dict) -> None:
         """Ajoute un plat à la mémoire des rejets (dédupe par id, bornée)."""
         rid = meal.get("id")
