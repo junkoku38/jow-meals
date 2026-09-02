@@ -957,3 +957,35 @@ reset_rejects:
       name: Instance Jow
       selector:
         text:
+
+export_week:
+  name: Exporter la semaine vers jow.fr
+  description: >-
+    Livre le planning de la semaine dans une collection jow.fr (« Semaine
+    N » par défaut, ou titre personnalisé). La collection est vidée puis
+    remplie à chaque export — dans l'app jow, ouvrez la collection dans le
+    cookbook et ajoutez les recettes au menu quand vous faites votre liste
+    d'achat. Home Assistant reste la source du planning.
+  fields:
+    week_offset:
+      name: Décalage de semaine
+      description: 0 = semaine en cours, 1 = semaine prochaine.
+      default: 0
+      selector:
+        number:
+          min: -4
+          max: 8
+    title:
+      name: Titre de la collection
+      description: 'Par défaut « Semaine N » (numéro ISO de la semaine visée).'
+      selector:
+        text:
+    is_private:
+      name: Privée
+      default: true
+      selector:
+        boolean:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:

@@ -870,7 +870,7 @@ class JowManager:
         # 2) remplir chaque jour via le pipeline suggest complet
         planned: dict[str, str] = {}
         failures: dict[str, str] = {}
-        for idx, day in enumerate(self.week_dates(week_offset)):
+        for _idx, day in enumerate(self.week_dates(week_offset)):
             weekday = WEEKDAYS[idx]
             day_crit = (day_criteria or {}).get(weekday, criteria)
             try:
@@ -2235,6 +2235,87 @@ class JowManager:
         if result.get("error"):
             return result
         return {"added": True, "recipe_id": rid, "collections": list(collections_ids)}
+
+    async def async_export_week(
+        self, week_offset: int = 0, title: str | None = None, is_private: bool = True,
+    ) -> dict:
+        """Livre le planning de la semaine dans une collection jow.fr.
+
+        Le use case : l'utilisateur fait sa liste d'achat dans l'APP jow —
+        il ouvre la collection (« Semaine 37 ») dans le cookbook et ajoute
+        les recettes au menu de son choix. HA reste la source du planning.
+
+        - title : défaut « Semaine N » (n° ISO de la semaine visée)
+        - si une collection du même titre existe : elle est VIDÉE puis
+          remplie (les recettes retirées via populate avec
+          collectionsIds=[]), sinon elle est créée
+        - seuls les jours planifiés sont exportés (ordre lundi→dimanche)
+        """
+        if not self.jow_token:
+            return {"error": "token_jow_absent", "exported": 0}
+        uid = await self._async_jow_user_id()
+        if not uid:
+            return {"error": "user_id_indisponible", "exported": 0}
+
+        # plats planifiés de la semaine visée (lundi → dimanche)
+        meals = []
+        for _idx, day in enumerate(self.week_dates(week_offset)):
+            meal = self.get_meal(day)
+            if meal and meal.get("id"):
+                meals.append((meal["id"], meal.get("name", "")))
+        if not meals:
+            return {"error": "semaine_vide", "exported": 0,
+                    "aide": "Planifiez des repas avant d'exporter"}
+
+        # n° de semaine ISO pour le titre par défaut
+        if not title:
+            iso = self.week_dates(week_offset)[0].isocalendar()
+            title = f"Semaine {iso[1]}"
+        title = title.strip() or "Semaine"
+
+        # chercher une collection existante du même titre (sinon créer)
+        colls = await self.api_client().get_collections(uid)
+        target = next(
+            (c for c in colls
+             if isinstance(c, dict) and (c.get("title") or "").strip() == title),
+            None,
+        )
+        if target is None:
+            created = await self.api_client().create_collection(uid, title, is_private)
+            if created.get("error"):
+                return {**created, "exported": 0}
+            target = created
+
+        coll_id = target.get("id")
+        # vider la collection existante : retirer chaque recette courante
+        existing = await self.api_client().get_collection(coll_id)
+        for r in (existing.get("recipes") or []):
+            if not isinstance(r, dict):
+                continue
+            rid = _safe_id(r.get("id") or r.get("_id"))
+            if rid:
+                # populate avec liste VIDE = retrait de toutes les collections
+                await self.api_client().populate_collection(uid, rid, [])
+
+        # pousser les 7 plats
+        exported = 0
+        for rid, name in meals:
+            res = await self.api_client().populate_collection(uid, rid, [coll_id])
+            if not res.get("error"):
+                exported += 1
+            else:
+                _LOGGER.warning("Export semaine : %s non ajoutée (%s)", name, res["error"])
+
+        _LOGGER.info(
+            "Semaine exportée vers la collection « %s » : %d plats",
+            title, exported,
+        )
+        return {
+            "collection": title,
+            "collection_id": coll_id,
+            "exported": exported,
+            "error": None,
+        }
 
     async def async_import_collection(self, collection_id: str, week_offset: int = 0) -> dict:
         """Importe les recettes d'une collection Jow sur les jours vides.

@@ -45,6 +45,7 @@ from .const import (
     SERVICE_COPY_MEAL,
     SERVICE_EXCLUDE_INGREDIENT,
     SERVICE_EXPIRING,
+    SERVICE_EXPORT_WEEK,
     SERVICE_GET_CONTEXT,
     SERVICE_IMPORT_MENU,
     SERVICE_IMPORT_TOKEN,
@@ -572,6 +573,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
         )
 
+    async def handle_export_week(call: ServiceCall) -> ServiceResponse:
+        """Livre le planning de la semaine dans une collection jow.fr."""
+        mgr = _get_manager(hass, call, manager)
+        return await mgr.async_export_week(
+            week_offset=call.data.get(ATTR_WEEK_OFFSET, 0),
+            title=call.data.get("title"),
+            is_private=call.data.get("is_private", True),
+        )
+
     async def handle_collection_import(call: ServiceCall) -> ServiceResponse:
         """Importe une collection Jow sur les jours vides du planning HA."""
         mgr = _get_manager(hass, call, manager)
@@ -690,6 +700,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             vol.Optional("recipe_id"): cv.string,
             vol.Optional(ATTR_WEEKDAY): vol.In(WEEKDAYS),
             vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXPORT_WEEK, handle_export_week,
+        schema=vol.Schema({
+            vol.Optional(ATTR_WEEK_OFFSET, default=0): vol.Coerce(int),
+            vol.Optional("title"): cv.string,
+            vol.Optional("is_private", default=True): cv.boolean,
             vol.Optional(ATTR_ENTRY_NAME): cv.string,
         }),
         supports_response=SupportsResponse.ONLY,
@@ -941,6 +961,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_COLLECTION_CREATE,
                 SERVICE_COLLECTION_ADD_RECIPE,
                 SERVICE_COLLECTION_IMPORT,
+                SERVICE_EXPORT_WEEK,
                 SERVICE_UPLOADED_RECIPES,
                 SERVICE_COPY_MEAL,
                 SERVICE_SET_COVERS,
