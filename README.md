@@ -88,6 +88,21 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 
 ## Commande d'ingrédients (partenaires)
 
+### Commander depuis HA — la méthode complète (v1.4)
+
+Les sessions magasin jow exigent un login enseigne avec MFA dans un navigateur réel (reCAPTCHA Enterprise + OTP) : impossible en headless. La méthode en 2 outils :
+
+1. **`scripts/jow_marchand.py`** (sur ton PC, ~1× par mois) :
+   ```bash
+   pip install playwright requests && playwright install chromium
+   python jow_marchand.py --email shikyoo@free.fr
+   # un Chrome s'ouvre → tape ton mot de passe + ton CODE MFA
+   # le script capture tokens + cookie et met à jour HA tout seul
+   ```
+   (options : `--ha-url`, `--ha-token` pour la mise à jour automatique via `jow.import_token`)
+2. **Dans HA** : la session magasin étant partagée (même cookie/nœud), la chaîne devient active :
+   `jow.order_slots` (créneaux) → `jow.order_cart` (panier depuis le menu) → `jow.order_create` (commande non payée) → paiement sur jow.fr ou `jow.order_pay` avec `confirm: true`.
+
 Chaîne de services (⚠️ les derniers touchent de vrais achats) :
 1. `jow.order_providers` — fournisseurs disponibles (lecture)
 2. `jow.order_slots` — créneaux du magasin configuré (lecture)

@@ -919,3 +919,26 @@ order_prepare:
       name: Instance Jow
       selector:
         text:
+
+import_token:
+  name: Importer un token marchand (script jow-marchand)
+  description: >-
+    Utilisé par le script scripts/jow_marchand.py : importe le refresh
+    token (et le cookie JowSession) capturés lors du login enseigne en
+    navigateur réel (MFA saisi manuellement). La session magasin devient
+    celle de HA immédiatement. À ne pas appeler à la main sauf si vous
+    savez ce que vous faites.
+  fields:
+    refresh_token:
+      name: Refresh token
+      required: true
+      selector:
+        text:
+    session_cookie:
+      name: Cookie JowSession (optionnel)
+      selector:
+        text:
+    entry_name:
+      name: Instance Jow
+      selector:
+        text:

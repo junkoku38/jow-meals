@@ -47,6 +47,7 @@ from .const import (
     SERVICE_EXPIRING,
     SERVICE_GET_CONTEXT,
     SERVICE_IMPORT_MENU,
+    SERVICE_IMPORT_TOKEN,
     SERVICE_MEAL_DONE,
     SERVICE_ORDER_CART,
     SERVICE_ORDER_CREATE,
@@ -428,6 +429,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         return {"recipes": recipes, "count": len(recipes)}
 
+    async def handle_import_token(call: ServiceCall) -> ServiceResponse:
+        """Importe un refresh token (et son cookie) obtenus par le script
+        jow-marchand (login enseigne en navigateur réel, MFA saisi main).
+
+        Met à jour les options de l'entry et force le refresh : la session
+        magasin capturée par le script devient la session de HA.
+        """
+        mgr = _get_manager(hass, call, manager)
+        rt = call.data.get("refresh_token", "").strip()
+        if not rt:
+            return {"error": "refresh_token_requis"}
+        mgr.jow_refresh_token = rt
+        # cookie éventuel : l'injecter dans le jar du client
+        cookie = call.data.get("session_cookie")
+        if cookie:
+            client = mgr.api_client()
+            client._session.cookies.set("JowSession", cookie, domain=".jow.fr")
+        # refresh immédiat : la session devient active dans HA
+        ok = await mgr.async_refresh_jow_token()
+        await mgr._async_persist_tokens()
+        from homeassistant.helpers.dispatcher import async_dispatcher_send
+        async_dispatcher_send(hass, mgr.update_signal)
+        return {"imported": bool(ok), "session_magasin": bool(cookie)}
+
     async def handle_order_session(call: ServiceCall) -> ServiceResponse:
         """Prépare la commande partagée HA ⇄ navigateur.
 
@@ -607,6 +632,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         DOMAIN, SERVICE_ORDER_CREATE, handle_order_create,
         schema=vol.Schema({vol.Optional(ATTR_ENTRY_NAME): cv.string}),
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_IMPORT_TOKEN, handle_import_token,
+        schema=vol.Schema({
+            vol.Required("refresh_token"): cv.string,
+            vol.Optional("session_cookie"): cv.string,
+            vol.Optional(ATTR_ENTRY_NAME): cv.string,
+        }),
     )
     hass.services.async_register(
         DOMAIN, SERVICE_ORDER_SESSION, handle_order_session,
@@ -879,6 +912,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ORDER_CREATE,
                 SERVICE_ORDER_PAY,
                 SERVICE_ORDER_SESSION,
+                SERVICE_IMPORT_TOKEN,
                 SERVICE_COLLECTIONS_LIST,
                 SERVICE_COLLECTION_CREATE,
                 SERVICE_COLLECTION_ADD_RECIPE,
