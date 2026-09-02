@@ -2283,6 +2283,15 @@ class JowManager:
             if stored:
                 self.plan[day.isoformat()] = stored
                 imported += 1
+                # kcal : absentes du flux collection — fetch détail immédiat
+                calories = await self.async_fetch_calories(rid)
+                if calories is not None:
+                    stored["calories"] = calories
+                # kcal : absentes du flux letscook — fetch détail immédiat
+                # (sinon « calories inconnues » jusqu'à un sync_calories)
+                calories = await self.async_fetch_calories(rid)
+                if calories is not None:
+                    stored["calories"] = calories
 
         if imported:
             await self.async_save()
