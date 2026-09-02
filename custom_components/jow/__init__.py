@@ -183,7 +183,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         async_setup_page(hass)
     except Exception as err:  # noqa: BLE001
-        _LOGGER.debug("Page d'auth jow non enregistrée : %s", err)
+        _LOGGER.warning("Page d'auth jow non enregistrée : %s", err)
     # Si on a un refresh token mais pas d'access token valide, on en
     # génère un immédiatement au démarrage.
     if manager.jow_refresh_token and not manager.is_authenticated:
