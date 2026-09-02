@@ -4,12 +4,23 @@
 À lancer sur TON PC (Windows/Mac/Linux) quand jow redemande la session
 magasin (en pratique : ~1× par mois, ou après chaque "token expiré").
 
+⚠️ ÉTAT EXPÉRIMENTAL — ce qui est PROUVÉ vs à valider :
+   ✔ testé en réel : le login Auchan en navigateur VISIBLE passe le
+     reCAPTCHA Enterprise et aboutit à la demande de code MFA
+   ✘ testé en réel : le mode headless est REJETÉ (reCAPTCHA) — d'où le
+     navigateur visible
+   ? NON ENCORE VALIDÉ (exige ton code MFA, que je ne peux pas saisir) :
+     la capture du callback, la lecture des tokens, l'import dans HA,
+     et la chaîne order_* derrière. Le script peut nécessiter des
+     ajustements au premier usage réel — garde les tokens affichés en
+     secours et signale tout écart.
+
 Ce que ça fait :
 1. Ouvre un navigateur Chrome VISIBLE sur le login Auchan (jow)
 2. Pré-remplit ton email/mot de passe — TU TAPES TON CODE MFA
-3. Suit automatiquement le callback jow → capture les tokens + le cookie
+3. Suit le callback jow → capture les tokens + le cookie
 4. Met à jour Home Assistant (entry Jow) : refresh token + cookie JowSession
-5. Teste la chaîne de commande (provider/store → order_slots)
+   (via jow.import_token — sinon affichage à coller à la main)
 
 Prérequis (une seule fois) :
     pip install playwright requests

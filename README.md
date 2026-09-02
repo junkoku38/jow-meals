@@ -88,9 +88,9 @@ Les allergènes sont utilisés pour **filtrer automatiquement** les suggestions 
 
 ## Commande d'ingrédients (partenaires)
 
-### Commander depuis HA — la méthode complète (v1.4)
+### Commander depuis HA — la méthode (v1.4, ÉTAT EXPÉRIMENTAL)
 
-Les sessions magasin jow exigent un login enseigne avec MFA dans un navigateur réel (reCAPTCHA Enterprise + OTP) : impossible en headless. La méthode en 2 outils :
+Les sessions magasin jow exigent un login enseigne avec MFA dans un navigateur réel (reCAPTCHA Enterprise + OTP) : impossible en headless (vérifié). La méthode en 2 outils — **validée jusqu'à la demande de MFA ; la suite (callback, import, order_*) est à confirmer au premier usage réel** :
 
 1. **`scripts/jow_marchand.py`** (sur ton PC, ~1× par mois) :
    ```bash
