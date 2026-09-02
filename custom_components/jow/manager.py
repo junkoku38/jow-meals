@@ -2312,9 +2312,13 @@ class JowManager:
         exported = 0
         last_err = None
         for rid, name in meals:
+            # favori d'abord (le populate n'accepte que des recettes
+            # référencées) — retenté une fois avec selected_from différent
+            # si la première tentative est refusée
             fav = await self.api_client().add_recipe_to_favorites(uid, rid, selected_from="cookbook")
             if fav.get("error"):
-                _LOGGER.debug("Favori %s : %s (continue)", rid, fav["error"])
+                _LOGGER.warning("Favori %s (%s) : %s — retry cooking", rid, name, fav["error"])
+                fav = await self.api_client().add_recipe_to_favorites(uid, rid, selected_from="cooking")
             res = await self.api_client().populate_collection(uid, rid, [coll_id])
             if not res.get("error"):
                 exported += 1
