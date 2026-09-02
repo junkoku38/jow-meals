@@ -2582,7 +2582,9 @@ class JowManager:
         if not self.jow_token:
             return {"imported": 0, "error": "token_jow_absent"}
 
-        # 1) endpoint /menu (historique) — souvent 500, on tente puis on replie
+        # 1) endpoint /menu (historique) — parfois 200. Même en succès,
+        # on rafraîchit le cache liste-ouverte via letscook (le chemin
+        # /menu ne le remplit pas) PUIS on retourne le résultat.
         resp = await self._async_jow_get(
             JOW_MENU_URL, params={"availabilityZoneId": "FR"}
         )
@@ -2592,6 +2594,9 @@ class JowManager:
                 result = self._import_from_menu_data(data, week_offset)
                 if result["imported"]:
                     await self.async_save()
+                # cache d'état : lecture letscook (source fiable du menu)
+                await self._async_get_letscook()
+                if result["imported"] or result.get("skipped"):
                     return result
             except ValueError:
                 pass  # réponse illisible : on replie sur letscook
