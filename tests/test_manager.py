@@ -981,3 +981,83 @@ def test_purge_old():
     asyncio.run(m.async_purge_old())
     assert old not in m.plan
     assert recent in m.plan
+
+def test_reset_rejects_clears_and_persists():
+    """reset_rejects vide la mémoire (save appelé) et garde le plan intact."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    import asyncio
+
+    m.rejected = [{"id": "r1", "name": "A", "ts": 1}, {"id": "r2", "name": "B", "ts": 2}]
+    jour = m.week_dates(0)[0].isoformat()
+    m.plan = {jour: {"id": "x", "name": "Plat mangé"}}
+    res = asyncio.run(m.async_reset_rejects())
+    assert res == {"cleared": 2}
+    assert m.rejected == []
+    # le plan (anti-répétition repas mangés) est intact
+    assert m.plan[jour]["name"] == "Plat mangé"
+    assert m.async_save.called
+
+
+def test_import_menu_fetches_calories_and_dedupes_intra_list():
+    """Le chemin letscook : (1) fetch kcal par plat importé, (2) un doublon
+    dans openShoppingList ne remplit pas deux jours."""
+    m = _manager()
+    m.async_save = AsyncMock(return_value=None)
+    m.jow_token = "tok"  # garde d'auth de l'import
+    import asyncio
+
+    m.plan = {}
+    m.rejected = []
+
+    # la liste Jow contient A DEUX FOIS + B une fois
+    letscook_data = {
+        "openShoppingList": {
+            "meals": [
+                {"recipe": {"id": "A", "title": "Plat A"}, "coversCount": 2},
+                {"recipe": {"id": "A", "title": "Plat A"}, "coversCount": 2},
+                {"recipe": {"id": "B", "title": "Plat B"}, "coversCount": 2},
+            ]
+        }
+    }
+    fetched = []
+    kcal = {"A": 500, "B": 300}
+
+    class _Resp204:
+        status_code = 204
+
+        def json(self):
+            return {}
+
+    class FakeClient:
+        async def get(self, url, params=None, timeout=15):
+            return _Resp204()  # /menu/week indisponible → repli letscook
+
+        async def get_collection(self, cid):
+            return {}
+        async def get_letscook(self):
+            # simulé via _async_get_letscook ? le manager l'appelle ;
+            # on patche directement la lecture interne via le client :
+            return letscook_data
+
+    m.api_client = lambda: FakeClient()
+
+    async def fake_fetch(rid):
+        fetched.append(rid)
+        return kcal[rid]
+
+    m.async_fetch_calories = fake_fetch
+
+    # _async_get_letscook est une méthode du manager qui passe par le client :
+    # monkeypatcher la méthode pour rendre nos données :
+    async def fake_letscook():
+        return letscook_data
+    m._async_get_letscook = fake_letscook
+
+    res = asyncio.run(m.async_import_menu_from_jow(week_offset=0))
+    # A (dédoublonné) + B = 2 plats, pas 3
+    assert res["imported"] == 2
+    # kcal fetchées pour chacun
+    assert sorted(fetched) == ["A", "B"]
+    for meal in m.plan.values():
+        assert meal["calories"] == kcal[meal["id"]]

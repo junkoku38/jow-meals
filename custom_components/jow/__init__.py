@@ -165,7 +165,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ai_entity=opts.get(CONF_AI_ENTITY, ""),
         weather_entity=opts.get(CONF_WEATHER_ENTITY, ""),
         jow_token=jow_token,
-        jow_refresh_token=opts.get(CONF_JOW_REFRESH_TOKEN, ""),
+        # repli data : la rotation du refresh est persistée dans entry.data
+        # par _async_persist_tokens — sans ce repli, un reboot ressuscitait
+        # l'ancien token (révoqué par la rotation) → boucle « token expiré »
+        jow_refresh_token=opts.get(CONF_JOW_REFRESH_TOKEN, "")
+        or entry.data.get(CONF_JOW_REFRESH_TOKEN, ""),
         entry_id=entry.entry_id,
     )
     await manager.async_load()

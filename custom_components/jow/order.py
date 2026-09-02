@@ -31,10 +31,6 @@ from .api import JOW_API_BASE, JowClient
 _LOGGER = logging.getLogger(__name__)
 
 
-class JowOrderError(Exception):
-    """Erreur de commande (route instable, panier vide, paiement refusé)."""
-
-
 class JowOrderManager:
     """Orchestration de commande côté intégration."""
 

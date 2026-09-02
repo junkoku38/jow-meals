@@ -110,6 +110,13 @@ Chaîne de services (⚠️ les derniers touchent de vrais achats) :
 4. `jow.order_create` — crée la commande **non payée** (visible sur jow.fr)
 5. `jow.order_pay` — **PAIEMENT RÉEL** : exige `confirm: true` explicite — aucune automatisation ne peut payer par accident
 
+## Mémoire des rejets et imports
+
+L'intégration mémorise 60 jours les plats **effacés sans être marqués faits** (« je ne veux pas de celui-là ») : ils ne sont plus proposés par les suggestions ni importés. Les plats *mangés* suivent l'anti-répétition standard (4 semaines).
+
+- **`jow.reset_rejects`** : vide la mémoire des rejets (repas mangés conservés). À appeler si des effacements en bloc (semaines vidées d'une traite, tests) ont marqués « refusés » des plats jamais réellement rejetés, ou si l'import semble bloqué.
+- **L'import de menu** (`jow.import_menu`) remplit les **jours vides de la semaine affichée** : les plats déjà planifiés sur cette même semaine et les rejets sont écartés ; un plat servi une autre semaine reste importable.
+
 ## Blueprints d'automatisation
 
 Trois blueprints prêts à importer (Blueprints →Importer un blueprint, URL du fichier) :

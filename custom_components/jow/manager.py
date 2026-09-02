@@ -24,7 +24,6 @@ from .const import (
     CONF_JOW_REFRESH_TOKEN,
     CONF_JOW_TOKEN,
     DEFAULT_COVERS,
-    JOW_AUTH_REFRESH_URL,
     JOW_FAVORITES_URL,
     JOW_MENU_URL,
     JOW_PROFILE_URL,
@@ -2100,52 +2099,22 @@ class JowManager:
     async def async_refresh_jow_token(self) -> bool:
         """Rafraîchit l'access token JWT Jow via le refresh token.
 
-        Jow utilise un refresh token (valide ~6 mois) pour générer un access
-        token (valide 48h). L'endpoint POST /public/auth/refresh attend le
-        refresh token dans le corps de la requête (JSON) — ne PAS envoyer
-        d'en-tête Authorization, sinon l'API répond 500.
+        Délègue au JowClient (api.py) : parsing centralisé (tokens à la
+        racine — vérifié sur l'API réelle), ROTATION du refresh conservée,
+        et cookie JowSession maintenu dans le jar de la Session — le
+        refresh module-level d'avant jetait le Set-Cookie à chaque
+        boot / tick 24 h, cassant le nœud de routage (sticky session).
         """
         if not self.jow_refresh_token:
             return False
-
-        def _refresh():
-            headers = {
-                "accept": "application/json, text/plain, */*",
-                "content-type": "application/json",
-                "origin": "https://jow.fr",
-                "referer": "https://jow.fr/",
-                "x-jow-withmeta": "true",
-                "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "accept-language": "fr",
-            }
-            resp = requests.post(
-                JOW_AUTH_REFRESH_URL,
-                headers=headers,
-                params={"availabilityZoneId": "FR"},
-                data=json.dumps({"refreshToken": self.jow_refresh_token}),
-                timeout=15,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data.get("accessToken"), data.get("refreshToken")
-
-        try:
-            result = await self.hass.async_add_executor_job(_refresh)
-            if result:
-                new_access, new_refresh = result
-                if not new_access:
-                    _LOGGER.warning("Rafraîchissement token Jow : access token vide renvoyé par l'API")
-                    return False
-                self.jow_token = new_access
-                if new_refresh:
-                    self.jow_refresh_token = new_refresh
-                _LOGGER.info("Token Jow rafraîchi avec succès (via refresh token)")
-                # Persister les nouveaux tokens dans la config entry
-                await self._async_persist_tokens()
-                return True
-        except Exception as err:
-            _LOGGER.warning("Rafraîchissement token Jow échoué : %s", err)
-        return False
+        new_access = await self.api_client().refresh_token()
+        if not new_access:
+            _LOGGER.warning("Rafraîchissement token Jow refusé par l'API")
+            return False
+        self.jow_token = new_access
+        await self._async_persist_tokens()
+        _LOGGER.info("Token Jow rafraîchi avec succès (via refresh token)")
+        return True
 
     async def _async_persist_tokens(self) -> None:
         """Persiste les tokens rafraîchis dans la config entry pour survivre
@@ -2163,7 +2132,16 @@ class JowManager:
             new_data = {**entry.data}
             new_data[CONF_JOW_TOKEN] = self.jow_token
             new_data[CONF_JOW_REFRESH_TOKEN] = self.jow_refresh_token
-            self.hass.config_entries.async_update_entry(entry, data=new_data)
+            # persister AUSSI dans options : le config flow et le setup
+            # lisent les options en priorité — sans cette écriture miroir,
+            # une rotation suivie d'une édition d'options (via l'UI)
+            # écraserait le token tourné par l'ancien.
+            new_opts = {**entry.options}
+            new_opts[CONF_JOW_TOKEN] = self.jow_token
+            new_opts[CONF_JOW_REFRESH_TOKEN] = self.jow_refresh_token
+            self.hass.config_entries.async_update_entry(
+                entry, data=new_data, options=new_opts
+            )
         except Exception as err:
             _LOGGER.debug("Persistance tokens Jow impossible : %s", err)
 
@@ -2272,14 +2250,15 @@ class JowManager:
         if not recipes:
             return {"imported": 0, "error": None, "note": "collection_vide"}
 
-        already_planned = {
-            meal.get("id") for meal in self.plan.values()
-            if isinstance(meal, dict) and meal.get("id")
-        }
+        week_ids = {
+            (meal or {}).get("id")
+            for day in self.week_dates(week_offset)
+            if isinstance((meal := self.plan.get(day.isoformat())), dict)
+        } - {None}
         rejected_ids = {r.get("id") for r in self.rejected}
         eligible = [
             r for r in recipes
-            if _safe_id(r.get("id") or r.get("_id")) not in already_planned | rejected_ids
+            if _safe_id(r.get("id") or r.get("_id")) not in week_ids | rejected_ids
         ]
 
         imported = 0
@@ -2297,11 +2276,6 @@ class JowManager:
                 self.plan[day.isoformat()] = stored
                 imported += 1
                 # kcal : absentes du flux collection — fetch détail immédiat
-                calories = await self.async_fetch_calories(rid)
-                if calories is not None:
-                    stored["calories"] = calories
-                # kcal : absentes du flux letscook — fetch détail immédiat
-                # (sinon « calories inconnues » jusqu'à un sync_calories)
                 calories = await self.async_fetch_calories(rid)
                 if calories is not None:
                     stored["calories"] = calories
@@ -2535,17 +2509,36 @@ class JowManager:
 
         meals = []
         if isinstance(data, dict):
-            # liste ouverte : les recettes ajoutées au menu (non encore cuisinées)
+            # liste ouverte : les recettes ajoutées au menu (non encore cuisinées).
+            # Dédoublonnage intra-liste (id OU _id) : une recette présente
+            # deux fois dans openShoppingList ne devait pas remplir deux
+            # jours de la même semaine.
             osl = data.get("openShoppingList") or {}
+            seen_ids: set = set()
             if isinstance(osl, dict):
-                meals = [m for m in (osl.get("meals") or []) if isinstance(m, dict)]
-            # pendingMenu (si présent) en complément, dédupe par id de recette
+                for m in (osl.get("meals") or []):
+                    if not isinstance(m, dict):
+                        continue
+                    mid = _safe_id((m.get("recipe") or {}).get("id")
+                                   or (m.get("recipe") or {}).get("_id"))
+                    if mid and mid in seen_ids:
+                        continue
+                    if mid:
+                        seen_ids.add(mid)
+                    meals.append(m)
+            # pendingMenu (si présent) en complément, même dédoublonnage
             pm = data.get("pendingMenu")
             if isinstance(pm, dict):
-                seen = {(m.get("recipe") or {}).get("id") for m in meals}
                 for m in (pm.get("meals") or []):
-                    if isinstance(m, dict) and (m.get("recipe") or {}).get("id") not in seen:
-                        meals.append(m)
+                    if not isinstance(m, dict):
+                        continue
+                    mid = _safe_id((m.get("recipe") or {}).get("id")
+                                   or (m.get("recipe") or {}).get("_id"))
+                    if mid and mid in seen_ids:
+                        continue
+                    if mid:
+                        seen_ids.add(mid)
+                    meals.append(m)
 
         if not meals:
             return {"imported": 0, "skipped": 0, "error": None, "note": "menu_jow_vide"}
@@ -2584,7 +2577,21 @@ class JowManager:
                 break
             if self.plan.get(day.isoformat()):
                 continue
+            # défense : si la liste contenait un doublon résiduel, l'écarter
+            # ici aussi (week_ids mis à jour à chaque jour rempli)
+            while eligible:
+                cand_rid = _safe_id((eligible[0].get("recipe") or {}).get("id")
+                                    or (eligible[0].get("recipe") or {}).get("_id"))
+                if not cand_rid or cand_rid not in week_ids:
+                    break
+                eligible.pop(0)
+            if not eligible:
+                break
             m = eligible.pop(0)
+            m_rid = _safe_id((m.get("recipe") or {}).get("id")
+                             or (m.get("recipe") or {}).get("_id"))
+            if m_rid:
+                week_ids.add(m_rid)
             recipe = m.get("recipe") or {}
             rid = _safe_id(recipe.get("id") or recipe.get("_id"))
             if not rid:
@@ -2594,6 +2601,11 @@ class JowManager:
             if stored:
                 self.plan[day.isoformat()] = stored
                 imported += 1
+                # kcal : absentes du flux letscook — fetch détail immédiat
+                # (sinon « calories inconnues » jusqu'à un sync_calories)
+                calories = await self.async_fetch_calories(rid)
+                if calories is not None:
+                    stored["calories"] = calories
 
         if imported:
             await self.async_save()
@@ -2629,11 +2641,13 @@ class JowManager:
         imported = 0
         skipped = 0
         week_keys = {d.isoformat(): d for d in self.week_dates(week_offset)}
-        # dédoublonnage global : tout le planning HA + les rejets
-        already_planned_ids = {
-            meal.get("id") for meal in self.plan.values()
-            if isinstance(meal, dict) and meal.get("id")
-        }
+        # dédoublonnage SEMAINE VISÉE + rejets (cohérent avec le chemin
+        # letscook — un plat d'une autre semaine reste importable)
+        week_ids = {
+            (meal or {}).get("id")
+            for day in self.week_dates(week_offset)
+            if isinstance((meal := self.plan.get(day.isoformat())), dict)
+        } - {None}
         rejected_ids = {r.get("id") for r in self.rejected}
 
         def _try_import(date_iso: str | None, recipe: dict) -> None:
@@ -2651,7 +2665,7 @@ class JowManager:
                 return
             # Dédoublonnage global (même garantie que le chemin letscook) :
             # un plat déjà planifié ailleurs dans HA ou rejeté n'entre pas
-            if rid in already_planned_ids or rid in rejected_ids:
+            if rid in week_ids or rid in rejected_ids:
                 skipped += 1
                 return
             stored = _recipe_to_dict(recipe, self.default_covers)
