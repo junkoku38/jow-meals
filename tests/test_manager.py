@@ -370,45 +370,44 @@ def test_clear_week_remembers_rejects():
     assert m.rejected == []
 
 
-def test_import_letscook_dedupes_against_whole_plan():
-    """L'import letscook ne prend pas un plat déjà planifié n'importe où
-    dans HA (S comme S+1) ni un plat rejeté ; les plats excédentaires
-    restent disponibles (remaining) sans être perdus."""
+def test_import_letscook_dedupes_week_and_rejects():
+    """L'import letscook écarte les plats déjà planifiés SUR LA SEMAINE
+    VISÉE et les rejets ; un plat présent sur une AUTRE semaine de HA
+    est importable (l'import remplit les jours vides de la semaine)."""
     m = _manager()
     m.async_save = AsyncMock(return_value=None)
     import asyncio
 
-    # S complète avec le plat A ; S+1 vide
-    lundi = m.week_dates(0)[0].isoformat()
-    mardi = m.week_dates(0)[1].isoformat()
-    m.plan = {lundi: {"id": "A", "name": "Déjà planifié"}}
-    # le plat C a été rejeté il y a peu
+    # plat A présent... il y a 10 jours (autre semaine)
+    vieux = (date.today() - timedelta(days=10)).isoformat()
+    lundi_S1 = m.week_dates(1)[0].isoformat()   # lundi semaine PROCHAINE
+    mardi_S1 = m.week_dates(1)[1].isoformat()
+    m.plan = {
+        vieux: {"id": "A", "name": "Plat A (autre semaine)"},
+        lundi_S1: {"id": "B", "name": "Plat B (déjà sur la semaine visée)"},
+    }
     m.rejected = [{"id": "C", "name": "Rejeté", "ts": 9999999999}]
 
-    # La liste Jow contient A (déjà en HA), C (rejeté), D, E, F (libres)
-    meals = [
-        {"recipe": {"id": "A", "title": "Déjà planifié"}, "coversCount": 2},
-        {"recipe": {"id": "C", "title": "Rejeté"}, "coversCount": 2},
-        {"recipe": {"id": "D", "title": "Plat D"}, "coversCount": 2},
-        {"recipe": {"id": "E", "title": "Plat E"}, "coversCount": 2},
-        {"recipe": {"id": "F", "title": "Plat F"}, "coversCount": 2},
-    ]
-
-    # On appelle le cœur d'import letscook en isolant la logique : on
-    # reproduit le filtrage de async_import_menu_from_jow
-    already = {meal.get("id") for meal in m.plan.values() if isinstance(meal, dict) and meal.get("id")}
+    # le cœur du filtre (identique au code de async_import_menu_from_jow) :
+    week_ids = {
+        (meal or {}).get("id")
+        for day in m.week_dates(1)
+        if isinstance((meal := m.plan.get(day.isoformat())), dict)
+    } - {None}
     rejected = {r.get("id") for r in m.rejected}
+    meals = [
+        {"recipe": {"id": "A", "title": "Plat A"}},
+        {"recipe": {"id": "B", "title": "Plat B"}},
+        {"recipe": {"id": "C", "title": "Rejeté"}},
+        {"recipe": {"id": "D", "title": "Plat D"}},
+    ]
     eligible = [
         mm for mm in meals
-        if _safe_id((mm.get("recipe") or {}).get("id")) not in already | rejected
+        if _safe_id((mm.get("recipe") or {}).get("id")) not in week_ids | rejected
     ]
-    assert [e["recipe"]["id"] for e in eligible] == ["D", "E", "F"]
-
-    # Simulation du remplissage : mardi (seul jour vide de S) prend D,
-    # E et F restent "remaining"
-    m.plan[mardi] = {"id": "D", "name": "Plat D"}
-    remaining = [e for e in eligible if _safe_id((e.get("recipe") or {}).get("id")) != "D"]
-    assert len(remaining) == 2
+    # A est importable (présent ailleurs, pas sur la semaine visée) ;
+    # B écarté (déjà sur la semaine visée) ; C écarté (rejeté) ; D ok
+    assert [e["recipe"]["id"] for e in eligible] == ["A", "D"]
 
 
 def test_renew_week_clears_and_refills():

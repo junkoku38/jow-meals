@@ -2537,23 +2537,25 @@ class JowManager:
         if not meals:
             return {"imported": 0, "skipped": 0, "error": None, "note": "menu_jow_vide"}
 
-        # Dédoublonnage GLOBAL : ne pas importer un plat déjà planifié
-        # n'importe où dans le planning HA (semaine courante, S+1, tout
-        # l'historique récent) — sinon S et S+1 recevaient les mêmes plats
-        # et un plat déjà cuisiné cette semaine revenait.
-        already_planned = {
-            meal.get("id")
-            for meal in self.plan.values()
-            if isinstance(meal, dict) and meal.get("id")
-        }
-        # Les rejets ne doivent pas revenir par l'import non plus : un plat
-        # refusé dans HA est refusé, même si la liste Jow le contient encore.
+        # Dédoublonnage : écarter les plats déjà planifiés SUR LA SEMAINE
+        # VISÉE et les rejets (un plat refusé dans HA ne revient pas).
+        # Un plat présent sur une AUTRE semaine de HA est importable :
+        # « importer mon menu jow » remplit les jours vides de la semaine
+        # affichée même si le plat a déjà servi ailleurs — le doublon
+        # interdit est dans la MÊME semaine, pas à travers l'historique
+        # (retour utilisateur : 23 plats de la liste restaient « skipped »
+        # alors que la semaine avait des jours vides).
+        week_ids = {
+            (meal or {}).get("id")
+            for day in self.week_dates(week_offset)
+            if isinstance((meal := self.plan.get(day.isoformat())), dict)
+        } - {None}
         rejected_ids = {r.get("id") for r in self.rejected}
         eligible = []
         skipped_deja = 0
         for m in meals:
             rid = _safe_id((m.get("recipe") or {}).get("id") or (m.get("recipe") or {}).get("_id"))
-            if rid in already_planned or rid in rejected_ids:
+            if rid in week_ids or rid in rejected_ids:
                 skipped_deja += 1
                 continue
             eligible.append(m)
